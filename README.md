@@ -288,7 +288,7 @@ npx memo-bridge import --to cursor --input ./doubao-export.md
 
 ```bash
 # 克隆项目
-git clone https://github.com/landwei/memo-bridge.git
+git clone https://github.com/gonelake/memo-bridge.git
 cd memo-bridge
 
 # 安装依赖

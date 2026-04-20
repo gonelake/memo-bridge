@@ -41,11 +41,11 @@
     "mcp",
     "agent"
   ],
-  "author": "landwei",
+  "author": "gonelake",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/landwei/memo-bridge"
+    "url": "https://github.com/gonelake/memo-bridge"
   },
   "engines": {
     "node": ">=22.0.0"
