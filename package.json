@@ -1,0 +1,66 @@
+{
+  "name": "memo-bridge",
+  "version": "0.1.0",
+  "description": "AI memory migration tool — move your AI memories between tools freely. 让你的 AI 记忆自由流动。",
+  "type": "module",
+  "bin": {
+    "memo-bridge": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "memory",
+    "migration",
+    "transfer",
+    "claude",
+    "cursor",
+    "chatgpt",
+    "openclaw",
+    "hermes",
+    "codebuddy",
+    "mcp",
+    "agent"
+  ],
+  "author": "landwei",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/landwei/memo-bridge"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "inquirer": "^12.3.2",
+    "ora": "^8.2.0",
+    "yaml": "^2.7.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.1.1",
+    "@types/node": "^22.13.10"
+  }
+}
