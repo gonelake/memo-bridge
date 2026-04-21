@@ -3,7 +3,8 @@
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { MemoBridgeData, MemoBridgeMeta, UserProfile, KnowledgeSection, ProjectContext, InformationFeed, Memory, ExtensionsMap } from './types.js';
+import type { MemoBridgeData, MemoBridgeMeta, UserProfile, KnowledgeSection, ProjectContext, InformationFeed, Memory, ExtensionsMap, ToolId } from './types.js';
+import { isToolId } from './types.js';
 
 const FORMAT_VERSION = '0.1';
 const YAML_DELIMITER = '---';
@@ -147,6 +148,13 @@ export function serializeMemoBridge(data: MemoBridgeData): string {
       ];
       if (memory.created_at) parts.push(`created: ${memory.created_at}`);
       if (memory.updated_at) parts.push(`updated: ${memory.updated_at}`);
+      if (memory.content_hash) parts.push(`hash: ${memory.content_hash}`);
+      if (typeof memory.importance === 'number') parts.push(`importance: ${memory.importance.toFixed(2)}`);
+      if (typeof memory.freshness === 'number') parts.push(`freshness: ${memory.freshness.toFixed(2)}`);
+      if (typeof memory.quality === 'number') parts.push(`quality: ${memory.quality.toFixed(2)}`);
+      if (memory.origin?.tool) parts.push(`origin: ${memory.origin.tool}`);
+      if (memory.origin?.imported_from) parts.push(`origin_from: ${memory.origin.imported_from}`);
+      if (memory.origin?.first_seen_at) parts.push(`first_seen: ${memory.origin.first_seen_at}`);
       const meta = `<!-- ${parts.join(' | ')} -->`;
       lines.push(meta);
       lines.push(`- ${memory.content}`);
@@ -213,13 +221,36 @@ function parseMeta(yamlContent: string): MemoBridgeMeta {
     return {
       version: parsed.version || FORMAT_VERSION,
       exported_at: parsed.exported_at || new Date().toISOString(),
-      source: parsed.source || { tool: 'codebuddy', extraction_method: 'file' },
+      source: normalizeSource(parsed.source),
       owner: parsed.owner,
       stats: parsed.stats || { total_memories: 0, categories: 0 },
+      previous_export: parsed.previous_export,
     };
   } catch {
     return createDefaultMeta();
   }
+}
+
+/**
+ * Coerce `parsed.source` into the canonical object shape.
+ *
+ * v0.1 fixtures in the wild sometimes encode `source` as a bare scalar
+ * (`source: hermes`) rather than the documented object. Left as-is,
+ * downstream importers read `data.meta.source.tool` → `undefined` and
+ * emit things like "Imported via MemoBridge from undefined".
+ *
+ * If the scalar value matches a known ToolId, upgrade it; otherwise
+ * fall back to the default object. Anything that is already an object
+ * passes through untouched.
+ */
+function normalizeSource(raw: unknown): MemoBridgeMeta['source'] {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as MemoBridgeMeta['source'];
+  }
+  if (typeof raw === 'string' && isToolId(raw)) {
+    return { tool: raw, extraction_method: 'file' };
+  }
+  return { tool: 'codebuddy', extraction_method: 'file' };
 }
 
 function createDefaultMeta(): MemoBridgeMeta {
@@ -238,6 +269,7 @@ function flattenMeta(meta: MemoBridgeMeta): Record<string, unknown> {
     source: meta.source,
     ...(meta.owner ? { owner: meta.owner } : {}),
     stats: meta.stats,
+    ...(meta.previous_export ? { previous_export: meta.previous_export } : {}),
   };
 }
 
@@ -380,7 +412,20 @@ function parseRawMemories(content: string): Memory[] {
     confidence: number;
     created_at?: string;
     updated_at?: string;
+    content_hash?: string;
+    importance?: number;
+    freshness?: number;
+    quality?: number;
+    origin_tool?: ToolId;
+    origin_from?: ToolId;
+    origin_first_seen?: string;
   } | null = null;
+
+  const numOrUndef = (s?: string): number | undefined => {
+    if (s === undefined) return undefined;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : undefined;
+  };
 
   for (const line of lines) {
     // Match `<!-- key1: value1 | key2: value2 | ... -->` and parse each k:v pair.
@@ -402,12 +447,19 @@ function parseRawMemories(content: string): Memory[] {
           confidence: parseFloat(fields.confidence),
           created_at: fields.created || legacyDate,
           updated_at: fields.updated,
+          content_hash: fields.hash,
+          importance: numOrUndef(fields.importance),
+          freshness: numOrUndef(fields.freshness),
+          quality: numOrUndef(fields.quality),
+          origin_tool: isToolId(fields.origin) ? fields.origin : undefined,
+          origin_from: isToolId(fields.origin_from) ? fields.origin_from : undefined,
+          origin_first_seen: fields.first_seen,
         };
         continue;
       }
     }
     if (line.startsWith('- ') && pendingMeta) {
-      memories.push({
+      const memory: Memory = {
         id: `mem-${memories.length + 1}`,
         content: line.slice(2).trim(),
         category: 'general',
@@ -415,7 +467,19 @@ function parseRawMemories(content: string): Memory[] {
         confidence: pendingMeta.confidence,
         created_at: pendingMeta.created_at,
         updated_at: pendingMeta.updated_at,
-      });
+      };
+      if (pendingMeta.content_hash) memory.content_hash = pendingMeta.content_hash;
+      if (pendingMeta.importance !== undefined) memory.importance = pendingMeta.importance;
+      if (pendingMeta.freshness !== undefined) memory.freshness = pendingMeta.freshness;
+      if (pendingMeta.quality !== undefined) memory.quality = pendingMeta.quality;
+      if (pendingMeta.origin_tool) {
+        memory.origin = {
+          tool: pendingMeta.origin_tool,
+          ...(pendingMeta.origin_from ? { imported_from: pendingMeta.origin_from } : {}),
+          ...(pendingMeta.origin_first_seen ? { first_seen_at: pendingMeta.origin_first_seen } : {}),
+        };
+      }
+      memories.push(memory);
       pendingMeta = null;
     }
   }

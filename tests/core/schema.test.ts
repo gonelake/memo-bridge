@@ -138,6 +138,38 @@ stats:
     expect(data.meta.owner?.id).toBe('alice');
     expect(data.meta.owner?.locale).toBe('zh-CN');
   });
+
+  it('upgrades a bare scalar source (v0.1 legacy) into the canonical object', () => {
+    // Regression: some v0.1 fixtures wrote `source: hermes` instead of a
+    // nested object. Left raw, downstream importers read
+    // data.meta.source.tool as undefined and produced "from undefined"
+    // in the generated CLAUDE.md header.
+    const content = `---
+version: "0.1"
+source: hermes
+stats:
+  total_memories: 0
+  categories: 0
+---
+`;
+    const data = parseMemoBridge(content);
+    expect(data.meta.source.tool).toBe('hermes');
+    expect(data.meta.source.extraction_method).toBe('file');
+  });
+
+  it('falls back to default source object when scalar is not a valid ToolId', () => {
+    const content = `---
+version: "0.1"
+source: something-unknown
+stats:
+  total_memories: 0
+  categories: 0
+---
+`;
+    const data = parseMemoBridge(content);
+    expect(data.meta.source.tool).toBe('codebuddy');
+    expect(data.meta.source.extraction_method).toBe('file');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -661,5 +693,127 @@ hermes:
     delete data.extensions;
     const restored = parseMemoBridge(serializeMemoBridge(data));
     expect(restored.extensions).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.2 — quality / origin / previous_export fields
+// ---------------------------------------------------------------------------
+
+describe('v0.2 quality & sync fields', () => {
+  it('round-trips Memory.content_hash / importance / freshness / quality', () => {
+    const data = makeFullData();
+    data.raw_memories = [
+      {
+        id: 'm1',
+        content: '用 hash 做增量的唯一身份',
+        category: 'general',
+        source: '.memory/2026-04-20.md',
+        confidence: 0.8,
+        content_hash: 'abc123def456',
+        importance: 0.75,
+        freshness: 0.9,
+        quality: 0.54,
+      },
+    ];
+    const restored = parseMemoBridge(serializeMemoBridge(data));
+    const [m] = restored.raw_memories;
+    expect(m.content_hash).toBe('abc123def456');
+    expect(m.importance).toBeCloseTo(0.75, 2);
+    expect(m.freshness).toBeCloseTo(0.9, 2);
+    expect(m.quality).toBeCloseTo(0.54, 2);
+  });
+
+  it('round-trips Memory.origin (tool + imported_from + first_seen_at)', () => {
+    const data = makeFullData();
+    data.raw_memories = [
+      {
+        id: 'm1',
+        content: 'A→B→C 迁移链',
+        category: 'general',
+        source: 'MEMORY.md',
+        confidence: 0.7,
+        origin: {
+          tool: 'codebuddy',
+          imported_from: 'hermes',
+          first_seen_at: '2026-04-01',
+        },
+      },
+    ];
+    const restored = parseMemoBridge(serializeMemoBridge(data));
+    const [m] = restored.raw_memories;
+    expect(m.origin?.tool).toBe('codebuddy');
+    expect(m.origin?.imported_from).toBe('hermes');
+    expect(m.origin?.first_seen_at).toBe('2026-04-01');
+  });
+
+  it('round-trips Meta.previous_export for incremental sync', () => {
+    const data = makeFullData();
+    data.meta.previous_export = {
+      exported_at: '2026-04-15T00:00:00.000Z',
+      snapshot_hash: 'def789abc012',
+      total_memories: 42,
+    };
+    const restored = parseMemoBridge(serializeMemoBridge(data));
+    expect(restored.meta.previous_export).toEqual({
+      exported_at: '2026-04-15T00:00:00.000Z',
+      snapshot_hash: 'def789abc012',
+      total_memories: 42,
+    });
+  });
+
+  it('parses v0.1 files (without quality fields) without error — back-compat', () => {
+    // Simulate a v0.1 export that has no content_hash / importance / origin
+    const legacy = [
+      '---',
+      '# MemoBridge Format v0.1',
+      'version: "0.1"',
+      'exported_at: "2026-01-01T00:00:00.000Z"',
+      'source:',
+      '  tool: codebuddy',
+      '  extraction_method: file',
+      'stats:',
+      '  total_memories: 1',
+      '  categories: 1',
+      '---',
+      '',
+      '# 原始记忆',
+      '',
+      '<!-- source: foo.md | confidence: 0.9 | created: 2026-01-01 -->',
+      '- 老格式记忆',
+      '',
+    ].join('\n');
+    const data = parseMemoBridge(legacy);
+    expect(data.raw_memories).toHaveLength(1);
+    expect(data.raw_memories[0].content).toBe('老格式记忆');
+    expect(data.raw_memories[0].content_hash).toBeUndefined();
+    expect(data.raw_memories[0].importance).toBeUndefined();
+    expect(data.raw_memories[0].origin).toBeUndefined();
+    expect(data.meta.previous_export).toBeUndefined();
+  });
+
+  it('ignores malformed origin tool id gracefully', () => {
+    // If origin tool is not a valid ToolId, we silently drop origin (don't crash)
+    const content = [
+      '---',
+      'version: "0.1"',
+      'exported_at: "2026-04-20T00:00:00.000Z"',
+      'source:',
+      '  tool: codebuddy',
+      '  extraction_method: file',
+      'stats:',
+      '  total_memories: 1',
+      '  categories: 1',
+      '---',
+      '',
+      '# 原始记忆',
+      '',
+      '<!-- source: foo.md | confidence: 0.8 | origin: not-a-real-tool -->',
+      '- bad origin',
+      '',
+    ].join('\n');
+    const data = parseMemoBridge(content);
+    expect(data.raw_memories).toHaveLength(1);
+    expect(data.raw_memories[0].origin).toBeUndefined();
   });
 });
