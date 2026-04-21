@@ -75,8 +75,9 @@ program
   .option('-w, --workspace <path>', '指定单个工作区路径')
   .option('-s, --scan-dir <path>', '指定扫描根目录（自动发现所有工作区）')
   .option('-o, --output <path>', '输出文件路径', './memo-bridge.md')
+  .option('--since <path>', '增量模式：基于先前的导出文件，只输出新增/变更的记忆')
   .option('-v, --verbose', '详细输出')
-  .action(async (options: { from: string; workspace?: string; scanDir?: string; output: string; verbose?: boolean }) => {
+  .action(async (options: { from: string; workspace?: string; scanDir?: string; output: string; since?: string; verbose?: boolean }) => {
     if (!isToolId(options.from)) {
       log.error(`未知工具: ${options.from}。支持的工具: ${Object.keys(TOOL_NAMES).join(', ')}`);
       process.exit(1);
@@ -87,8 +88,57 @@ program
     log.info('提取器加载中...');
 
     try {
+      const { loadConfig } = await import('./core/config.js');
+      const config = await loadConfig();
+      const workspace = options.workspace ?? config.defaultWorkspace;
+
       const extractor = extractorRegistry.get(toolId);
-      const data = await extractor.extract({ workspace: options.workspace, scanDir: options.scanDir, verbose: options.verbose });
+      let data = await extractor.extract({ workspace, scanDir: options.scanDir, verbose: options.verbose });
+
+      // v0.2 — populate quality/hash fields before serialization
+      const { scoreMemories } = await import('./core/quality.js');
+      scoreMemories(data, { importanceKeywords: config.quality.importanceKeywords });
+
+      // v0.2 — apply user privacy patterns as a second redaction pass over
+      // raw_memories content. Built-in patterns are already applied inside
+      // each extractor; this pass lets users add org-specific rules via
+      // .memobridge.yaml without touching extractor internals.
+      if (config.privacy.extraPatterns.length > 0) {
+        const { scanAndRedact } = await import('./core/privacy.js');
+        let redactedCount = 0;
+        for (const m of data.raw_memories) {
+          const result = scanAndRedact(m.content, config.privacy.extraPatterns);
+          if (result.found) {
+            m.content = result.redacted_content;
+            redactedCount += result.detections.reduce((n, d) => n + d.count, 0);
+          }
+        }
+        if (redactedCount > 0) {
+          log.info(`用户自定义规则脱敏: ${redactedCount} 处`);
+        }
+      }
+
+      // v0.2 — incremental mode: diff against previous export
+      if (options.since) {
+        const { readFile } = await import('node:fs/promises');
+        const { parseMemoBridge } = await import('./core/schema.js');
+        const { diffMemories, applyDiff, computeSnapshotHash } = await import('./core/diff.js');
+
+        const prevRaw = await readFile(sanitizePath(options.since), 'utf-8');
+        const prev = parseMemoBridge(prevRaw);
+        // Score the previous snapshot too, in case it's a v0.1 export without hashes.
+        scoreMemories(prev, { importanceKeywords: config.quality.importanceKeywords });
+
+        const diff = diffMemories(data.raw_memories, prev.raw_memories);
+        log.info(`增量 diff: +${diff.stats.new} new, ~${diff.stats.changed} changed, -${diff.stats.deleted} deleted (ignored), =${diff.stats.unchanged} unchanged`);
+
+        data = applyDiff(data, diff);
+        data.meta.previous_export = {
+          exported_at: prev.meta.exported_at,
+          snapshot_hash: computeSnapshotHash(prev.raw_memories),
+          total_memories: prev.raw_memories.length,
+        };
+      }
 
       // Serialize to file with security checks
       const { serializeMemoBridge } = await import('./core/schema.js');
@@ -141,17 +191,28 @@ program
   .requiredOption('-i, --input <path>', '输入文件路径 (memo-bridge.md)')
   .option('-w, --workspace <path>', '工作区路径')
   .option('--overwrite', '覆盖已有内容')
+  .option('--mode <mode>', '导入模式: full | incremental', 'full')
   .option('--dry-run', '预览模式，不实际写入')
-  .action(async (options: { to: string; input: string; workspace?: string; overwrite?: boolean; dryRun?: boolean }) => {
+  .action(async (options: { to: string; input: string; workspace?: string; overwrite?: boolean; mode?: string; dryRun?: boolean }) => {
     if (!isToolId(options.to)) {
       log.error(`未知工具: ${options.to}。支持的工具: ${Object.keys(TOOL_NAMES).join(', ')}`);
       process.exit(1);
     }
     const toolId: ToolId = options.to;
+    const mode = options.mode === 'incremental' ? 'incremental' : 'full';
+
+    if (mode === 'incremental' && options.overwrite) {
+      log.warn('--mode=incremental 与 --overwrite 语义矛盾，已忽略 --overwrite');
+      options.overwrite = false;
+    }
 
     log.header(`MemoBridge — 导入记忆到 ${TOOL_NAMES[toolId]}`);
 
     try {
+      const { loadConfig } = await import('./core/config.js');
+      const config = await loadConfig();
+      const workspace = options.workspace ?? config.defaultWorkspace;
+
       const { readFile, stat: fstat } = await import('node:fs/promises');
       const { parseMemoBridge } = await import('./core/schema.js');
       const { MAX_READ_SIZE } = await import('./utils/security.js');
@@ -164,25 +225,83 @@ program
       }
 
       const content = await readFile(inputPath, 'utf-8');
-      const data = parseMemoBridge(content);
+      let data = parseMemoBridge(content);
+
+      // v0.2 — always score so every memory has a content_hash before the
+      // ledger is written. Legacy v0.1 files (no hash in meta) get a fresh
+      // hash; files that already carry a hash keep it (scoreMemories is
+      // now non-destructive on content_hash). This keeps full and
+      // incremental paths in sync so their ledger entries agree.
+      const { scoreMemories } = await import('./core/quality.js');
+      scoreMemories(data, { importanceKeywords: config.quality.importanceKeywords });
+
+      // v0.2 — incremental mode: filter out memories already imported into this tool
+      let ledgerSkipped = 0;
+      if (mode === 'incremental') {
+        const { loadImportLedger, filterAgainstLedger } = await import('./core/diff.js');
+        const ledger = await loadImportLedger(toolId);
+        const filtered = filterAgainstLedger(data, ledger);
+        data = filtered.data;
+        ledgerSkipped = filtered.skipped;
+        log.info(`增量导入: ${data.raw_memories.length} 待导入 / ${ledgerSkipped} 已跳过（此前已导入过）`);
+      }
 
       const importer = importerRegistry.get(toolId);
+
+      // v0.2 — snapshot files the importer may touch, before writing.
+      // Skip on dry-run (nothing is written) and when the importer declares
+      // no file targets (instruction-only importers).
+      let backupId: string | undefined;
+      if (!options.dryRun) {
+        const targets = importer.listTargets?.(data, {
+          workspace,
+          overwrite: options.overwrite,
+        }) ?? [];
+        if (targets.length > 0) {
+          const { createBackup, pruneBackups } = await import('./core/backup.js');
+          const manifest = await createBackup({
+            tool: toolId,
+            targets,
+            workspace,
+          });
+          backupId = manifest.id;
+          // Respect backup.retention — prune older backups after creating this one
+          await pruneBackups(process.cwd(), config.backup.retention);
+        }
+      }
+
       const result = await importer.import(data, {
-        workspace: options.workspace,
+        workspace,
         overwrite: options.overwrite,
         dryRun: options.dryRun,
       });
+
+      // v0.2 — on successful non-dry-run, record the hashes we just imported
+      if (result.success && !options.dryRun && data.raw_memories.length > 0) {
+        const { recordImported } = await import('./core/diff.js');
+        const { computeHash } = await import('./core/quality.js');
+        const hashes = data.raw_memories
+          .map(m => m.content_hash ?? computeHash(m.content))
+          .filter((h): h is string => Boolean(h));
+        await recordImported(toolId, hashes);
+      }
 
       if (result.success) {
         log.success(`导入完成!`);
         log.table('导入方式', result.method);
         log.table('导入条数', result.items_imported);
         if (result.items_skipped > 0) log.table('跳过条数', result.items_skipped);
+        if (ledgerSkipped > 0) log.table('增量跳过', ledgerSkipped);
         if (result.output_path) log.table('写入路径', result.output_path);
+        if (backupId) log.table('备份 ID', backupId);
         if (result.instructions) {
           console.log('');
           log.info('请按以下步骤完成导入:');
           console.log(result.instructions);
+        }
+        if (backupId) {
+          console.log('');
+          log.info(`如需回滚: memo-bridge backup restore ${backupId}`);
         }
       }
     } catch (err) {
@@ -214,9 +333,17 @@ program
     log.info('Step 1/3: 导出记忆...');
 
     try {
+      const { loadConfig } = await import('./core/config.js');
+      const config = await loadConfig();
+      const workspace = options.workspace ?? config.defaultWorkspace;
+
       // Extract
       const extractor = extractorRegistry.get(fromId);
-      const data = await extractor.extract({ workspace: options.workspace });
+      const data = await extractor.extract({ workspace });
+
+      // v0.2 — populate quality/hash fields so the importer sees a fully scored object
+      const { scoreMemories } = await import('./core/quality.js');
+      scoreMemories(data, { importanceKeywords: config.quality.importanceKeywords });
 
       log.info(`Step 2/3: 转换格式...`);
       log.table('记忆条数', data.meta.stats.total_memories);
@@ -224,19 +351,94 @@ program
       // Import
       log.info(`Step 3/3: 导入到 ${TOOL_NAMES[toId]}...`);
       const importer = importerRegistry.get(toId);
-      const result = await importer.import(data, { dryRun: options.dryRun });
+
+      // v0.2 — snapshot target files before writing
+      let backupId: string | undefined;
+      if (!options.dryRun) {
+        const targets = importer.listTargets?.(data, { workspace }) ?? [];
+        if (targets.length > 0) {
+          const { createBackup, pruneBackups } = await import('./core/backup.js');
+          const manifest = await createBackup({
+            tool: toId,
+            targets,
+            workspace,
+          });
+          backupId = manifest.id;
+          await pruneBackups(process.cwd(), config.backup.retention);
+        }
+      }
+
+      const result = await importer.import(data, { workspace, dryRun: options.dryRun });
 
       if (result.success) {
         log.success('迁移完成!');
         log.table('导入方式', result.method);
         log.table('导入条数', result.items_imported);
+        if (backupId) log.table('备份 ID', backupId);
         if (result.instructions) {
           console.log('');
           console.log(result.instructions);
         }
+        if (backupId) {
+          console.log('');
+          log.info(`如需回滚: memo-bridge backup restore ${backupId}`);
+        }
       }
     } catch (err) {
       log.error(`迁移失败: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+// backup list/restore commands
+const backupCmd = program
+  .command('backup')
+  .description('管理导入备份 / Manage import backups');
+
+backupCmd
+  .command('list')
+  .description('列出所有备份 / List all backups')
+  .option('--tool <tool>', '只显示指定工具的备份')
+  .action(async (options: { tool?: string }) => {
+    const { listBackups } = await import('./core/backup.js');
+    let backups = await listBackups();
+    if (options.tool) {
+      backups = backups.filter(b => b.tool === options.tool);
+    }
+
+    if (backups.length === 0) {
+      log.info('暂无备份');
+      return;
+    }
+
+    log.header(`MemoBridge — 备份列表 (${backups.length})`);
+    for (const b of backups) {
+      const snapshotCount = b.entries.filter(e => e.existed).length;
+      console.log(`  ${chalk.cyan(b.id)}`);
+      console.log(chalk.dim(`    ${b.created_at}  ·  ${TOOL_NAMES[b.tool]}  ·  ${snapshotCount}/${b.entries.length} 文件已快照`));
+      if (b.workspace) console.log(chalk.dim(`    workspace: ${b.workspace}`));
+    }
+  });
+
+backupCmd
+  .command('restore')
+  .description('恢复指定备份 / Restore a backup')
+  .argument('<id>', '备份 ID（从 backup list 获取）')
+  .action(async (id: string) => {
+    const { restoreBackup } = await import('./core/backup.js');
+    log.header(`MemoBridge — 恢复备份 ${id}`);
+    try {
+      const result = await restoreBackup(id);
+      log.success('恢复完成!');
+      log.table('已恢复', result.restored);
+      log.table('已删除', result.deleted);
+      if (result.skipped > 0) log.table('已跳过', result.skipped);
+      if (result.warnings.length > 0) {
+        console.log('');
+        for (const w of result.warnings) log.warn(w);
+      }
+    } catch (err) {
+      log.error(`恢复失败: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
   });
