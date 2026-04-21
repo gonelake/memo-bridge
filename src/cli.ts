@@ -15,6 +15,23 @@ import { getExportPromptForTool } from './prompts/index.js';
 // Register all built-in adapters (side effect)
 import './registry/defaults.js';
 
+/**
+ * Resolve a workspace value that may have come from a config file.
+ * Applies sanitizePath (absolutize + null-byte reject) so that even if
+ * something slipped past loadConfig's validateWritePath smoke test
+ * (e.g. a forbidden path was later un-forbidden), we still canonicalise
+ * before handing off to importers. Returns undefined unchanged.
+ */
+function resolveWorkspace(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    return sanitizePath(raw);
+  } catch (err) {
+    log.warn(`忽略非法 workspace 路径: ${raw} — ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+}
+
 const program = new Command();
 
 program
@@ -90,7 +107,7 @@ program
     try {
       const { loadConfig } = await import('./core/config.js');
       const config = await loadConfig();
-      const workspace = options.workspace ?? config.defaultWorkspace;
+      const workspace = resolveWorkspace(options.workspace ?? config.defaultWorkspace);
 
       const extractor = extractorRegistry.get(toolId);
       let data = await extractor.extract({ workspace, scanDir: options.scanDir, verbose: options.verbose });
@@ -211,7 +228,7 @@ program
     try {
       const { loadConfig } = await import('./core/config.js');
       const config = await loadConfig();
-      const workspace = options.workspace ?? config.defaultWorkspace;
+      const workspace = resolveWorkspace(options.workspace ?? config.defaultWorkspace);
 
       const { readFile, stat: fstat } = await import('node:fs/promises');
       const { parseMemoBridge } = await import('./core/schema.js');
@@ -335,7 +352,7 @@ program
     try {
       const { loadConfig } = await import('./core/config.js');
       const config = await loadConfig();
-      const workspace = options.workspace ?? config.defaultWorkspace;
+      const workspace = resolveWorkspace(options.workspace ?? config.defaultWorkspace);
 
       // Extract
       const extractor = extractorRegistry.get(fromId);
