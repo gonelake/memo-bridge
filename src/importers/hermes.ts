@@ -2,9 +2,17 @@
  * MemoBridge — Hermes Agent Importer
  * Writes to: ~/.hermes/memories/MEMORY.md (≤2,200 chars) + USER.md (≤1,375 chars)
  * Automatically trims content to fit Hermes' strict character limits
+ *
+ * v0.2 — also writes back `extensions.hermes.skills` as empty directory
+ * placeholders. Hermes skills are user-authored scripts that live in
+ * ~/.hermes/skills/<name>/; the MemoBridge intermediate format only
+ * preserves directory NAMES (not the scripts), so a fresh import into a
+ * new Hermes install creates the folder skeleton with a README stub
+ * telling the user what was there. Real cross-machine skill migration
+ * requires copying the directories themselves and is a v0.3 feature.
  */
 
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { BaseImporter } from './base.js';
@@ -14,6 +22,45 @@ import type { MemoBridgeData, ImportOptions, ImportResult } from '../core/types.
 const MEMORY_CHAR_LIMIT = 2200;
 const USER_CHAR_LIMIT = 1375;
 
+/**
+ * Strict whitelist for Hermes skill directory names (P1-4).
+ *
+ * Must satisfy ALL of:
+ *  - First char is [A-Za-z0-9_-]. Leading `.` is banned because `.git`,
+ *    `.ssh` etc. could shadow sensitive hidden folders; a leading dot
+ *    also trips file listing tools that hide dotfiles.
+ *  - Subsequent chars are [A-Za-z0-9_.-].
+ *  - Length 1..64 — long enough for real skill names, short enough that
+ *    ENAMETOOLONG is impossible even when joined with a deep workspace
+ *    path. Prevents buffer-like shenanigans with 4KB+ names.
+ *
+ * Consequently rejected: `/`, `\`, `.`, `..`, `\u0000`, `\n`, `\t`,
+ * control chars, Windows reserved names (`CON`, `PRN`, `AUX`, `NUL`,
+ * `COM1-9`, `LPT1-9` — all start with a letter so they'd pass syntax
+ * but are forbidden by the separate reservedWindows check below).
+ */
+const SKILL_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_.\-]{0,63}$/;
+
+/**
+ * Windows reserved device names — case-insensitive match on the full
+ * name (before any `.ext`). Creating a directory with one of these
+ * names on Windows fails cryptically, and on cross-platform archives
+ * it causes extraction errors. Easier to refuse upfront.
+ */
+const WINDOWS_RESERVED = new Set([
+  'CON', 'PRN', 'AUX', 'NUL',
+  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+]);
+
+/** Return true if the given skill name passes the strict whitelist. */
+function isValidSkillName(name: string): boolean {
+  if (!SKILL_NAME_RE.test(name)) return false;
+  const stem = name.split('.')[0]!.toUpperCase();
+  if (WINDOWS_RESERVED.has(stem)) return false;
+  return true;
+}
+
 /** Return the UTF-8 byte length of a string (matches on-disk file size). */
 function byteLength(s: string): number {
   return Buffer.byteLength(s, 'utf-8');
@@ -21,6 +68,32 @@ function byteLength(s: string): number {
 
 export default class HermesImporter extends BaseImporter {
   readonly toolId = 'hermes' as const;
+
+  listTargets(data: MemoBridgeData, options: ImportOptions): string[] {
+    const hermesDir = options.workspace || join(homedir(), '.hermes');
+    const memoriesDir = join(hermesDir, 'memories');
+    const targets = [join(memoriesDir, 'MEMORY.md'), join(memoriesDir, 'USER.md')];
+
+    // v0.2 — declare skill README stubs we may create, so backup/restore
+    // can delete them on rollback. We conservatively list ALL declared
+    // skills (not just "will be newly created"), because listTargets is
+    // called BEFORE import — we don't yet know which already exist.
+    // If a stub is pre-existing, backup records existed=true and restore
+    // puts it back; if it's ours, backup records existed=false and
+    // restore deletes it. Either way: safe.
+    const skills = data.extensions?.hermes?.skills;
+    if (Array.isArray(skills)) {
+      for (const s of skills) {
+        if (typeof s !== 'string') continue;
+        const name = s.trim();
+        // P1-4: same strict whitelist as writeBackSkills — keeps backup
+        // `targets` in sync with the directories we'll actually touch.
+        if (!name || !isValidSkillName(name)) continue;
+        targets.push(join(hermesDir, 'skills', name, 'README.md'));
+      }
+    }
+    return targets;
+  }
 
   async import(data: MemoBridgeData, options: ImportOptions): Promise<ImportResult> {
     const hermesDir = validateWritePath(options.workspace || join(homedir(), '.hermes'));
@@ -63,11 +136,85 @@ export default class HermesImporter extends BaseImporter {
       await writeFile(userPath, userContent, 'utf-8');
     }
 
+    // v0.2 — write back extensions.hermes.skills as empty directory
+    // placeholders. See module header for the design rationale.
+    const skillsCreated = await this.writeBackSkills(data, hermesDir, warnings);
+    if (skillsCreated > 0) {
+      warnings.push(`已创建 ${skillsCreated} 个 skills 目录占位（内容需手动补充）`);
+    }
+
     return {
       success: true, method: 'file_write',
       items_imported: this.countImported(data), items_skipped: 0,
       output_path: memoriesDir, warnings,
     };
+  }
+
+  /**
+   * Recreate skill directories declared in extensions.hermes.skills.
+   *
+   * Only creates directories that don't already exist — never touches
+   * existing skill contents. Drops a README.md stub in newly-created dirs
+   * so the user knows where it came from and what still needs to be done.
+   *
+   * Returns the number of directories created. Non-fatal failures are
+   * recorded into the `warnings` array so the rest of the import can
+   * proceed; losing the skill skeleton shouldn't fail a memory import.
+   */
+  private async writeBackSkills(
+    data: MemoBridgeData,
+    hermesDir: string,
+    warnings: string[],
+  ): Promise<number> {
+    const skillsExt = data.extensions?.hermes?.skills;
+    if (!Array.isArray(skillsExt) || skillsExt.length === 0) return 0;
+
+    const skillsDir = join(hermesDir, 'skills');
+    await mkdir(skillsDir, { recursive: true });
+
+    const existing = new Set<string>();
+    try {
+      const entries = await readdir(skillsDir, { withFileTypes: true });
+      for (const e of entries) if (e.isDirectory()) existing.add(e.name);
+    } catch {
+      // fresh install — skillsDir empty/absent, existing stays empty
+    }
+
+    let created = 0;
+    for (const raw of skillsExt) {
+      if (typeof raw !== 'string') continue;
+      const name = raw.trim();
+      // P1-4: strict whitelist (letters/digits/._-, 1..64, no leading dot,
+      // no Windows reserved names). Rejects null bytes, newlines, tabs,
+      // path separators, `.`/`..`, and over-long names that old
+      // includes-based filtering missed.
+      if (!name || !isValidSkillName(name)) {
+        warnings.push(`跳过非法 skill 名: ${JSON.stringify(raw)}`);
+        continue;
+      }
+      if (existing.has(name)) continue;
+
+      const dir = join(skillsDir, name);
+      try {
+        await mkdir(dir, { recursive: true });
+        const readme = [
+          `# Skill: ${name}`,
+          '',
+          `This skill directory was recreated by MemoBridge during an import from`,
+          `${data.meta.source.tool} on ${new Date().toISOString().slice(0, 10)}.`,
+          '',
+          `The source tool only recorded the skill's directory NAME, not its`,
+          `implementation. Re-create the skill scripts here (or copy them from`,
+          `the origin machine) to restore functionality.`,
+          '',
+        ].join('\n');
+        await writeFile(join(dir, 'README.md'), readme, 'utf-8');
+        created++;
+      } catch (err) {
+        warnings.push(`创建 skill 目录 ${name} 失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return created;
   }
 
   /**

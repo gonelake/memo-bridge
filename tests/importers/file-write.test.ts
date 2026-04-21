@@ -433,6 +433,76 @@ describe('HermesImporter — extensions.hermes.skills write-back', () => {
     expect(targets).toContain(join(ws, 'skills', 'skill-a', 'README.md'));
     expect(targets).toContain(join(ws, 'skills', 'skill-b', 'README.md'));
   });
+
+  // -------------------------------------------------------------------------
+  // P1-4 — strict whitelist on skill names
+  //
+  // The old filter only blocked `/`, `\`, `.`, `..`. It missed null bytes,
+  // newlines, tabs, control chars, Windows reserved names, leading dots,
+  // and over-long names. The new regex `/^[A-Za-z0-9_-][A-Za-z0-9_.\-]{0,63}$/`
+  // plus a Windows-reserved-name check covers all of them.
+  // -------------------------------------------------------------------------
+
+  it('rejects skill name containing null byte', async () => {
+    const data = dataWithSkills(['bad\u0000name', 'good-skill']);
+    const result = await importer.import(data, { workspace: ws });
+    expect(await fileExists(join(ws, 'skills', 'good-skill'))).toBe(true);
+    expect(result.warnings?.some(w => w.includes('非法 skill 名'))).toBe(true);
+    // No dir with the null byte ever gets created
+    expect(await fileExists(join(ws, 'skills', 'bad\u0000name'))).toBe(false);
+  });
+
+  it('rejects skill name containing newline or tab', async () => {
+    const data = dataWithSkills(['line\nbreak', 'tab\there', 'ok']);
+    const result = await importer.import(data, { workspace: ws });
+    expect(await fileExists(join(ws, 'skills', 'ok'))).toBe(true);
+    const illegal = result.warnings?.filter(w => w.includes('非法 skill 名')) ?? [];
+    expect(illegal.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('rejects skill name longer than 64 chars', async () => {
+    const tooLong = 'a'.repeat(65);
+    const justRight = 'a'.repeat(64);
+    const data = dataWithSkills([tooLong, justRight]);
+    const result = await importer.import(data, { workspace: ws });
+    expect(await fileExists(join(ws, 'skills', justRight))).toBe(true);
+    expect(await fileExists(join(ws, 'skills', tooLong))).toBe(false);
+    expect(result.warnings?.some(w => w.includes('非法 skill 名'))).toBe(true);
+  });
+
+  it('rejects skill name starting with a dot (hidden-dir shadowing)', async () => {
+    const data = dataWithSkills(['.git', '.ssh', 'visible']);
+    const result = await importer.import(data, { workspace: ws });
+    expect(await fileExists(join(ws, 'skills', 'visible'))).toBe(true);
+    expect(await fileExists(join(ws, 'skills', '.git'))).toBe(false);
+    expect(await fileExists(join(ws, 'skills', '.ssh'))).toBe(false);
+    expect((result.warnings ?? []).filter(w => w.includes('非法 skill 名')).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('rejects Windows reserved names (CON, NUL, COM1, ...)', async () => {
+    const data = dataWithSkills(['CON', 'nul', 'com1', 'LPT9.txt', 'normal']);
+    const result = await importer.import(data, { workspace: ws });
+    expect(await fileExists(join(ws, 'skills', 'normal'))).toBe(true);
+    const warnings = (result.warnings ?? []).filter(w => w.includes('非法 skill 名'));
+    expect(warnings.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('accepts valid skill names with allowed characters', async () => {
+    const data = dataWithSkills(['skill-a', 'Skill_v2.1', 'ABC123', 'my-skill.v2']);
+    const result = await importer.import(data, { workspace: ws });
+    for (const name of ['skill-a', 'Skill_v2.1', 'ABC123', 'my-skill.v2']) {
+      expect(await fileExists(join(ws, 'skills', name, 'README.md'))).toBe(true);
+    }
+    expect(result.warnings?.filter(w => w.includes('非法 skill 名')) ?? []).toEqual([]);
+  });
+
+  it('listTargets applies the same whitelist (symmetric with write path)', () => {
+    const data = dataWithSkills(['bad\u0000name', '.hidden', 'CON', 'ok-skill']);
+    const targets = importer.listTargets(data, { workspace: ws });
+    // Only 'ok-skill' should pass the whitelist
+    const skillTargets = targets.filter(t => t.includes('/skills/'));
+    expect(skillTargets).toEqual([join(ws, 'skills', 'ok-skill', 'README.md')]);
+  });
 });
 
 describe('OpenClawImporter — extensions.openclaw write-back', () => {
