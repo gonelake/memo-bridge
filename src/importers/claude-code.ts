@@ -13,6 +13,13 @@ import type { MemoBridgeData, ImportOptions, ImportResult } from '../core/types.
 export default class ClaudeCodeImporter extends BaseImporter {
   readonly toolId = 'claude-code' as const;
 
+  listTargets(_data: MemoBridgeData, options: ImportOptions): string[] {
+    const rawPath = options.workspace
+      ? join(options.workspace, 'CLAUDE.md')
+      : join(homedir(), '.claude', 'CLAUDE.md');
+    return [rawPath];
+  }
+
   async import(data: MemoBridgeData, options: ImportOptions): Promise<ImportResult> {
     const rawPath = options.workspace
       ? join(options.workspace, 'CLAUDE.md')
@@ -89,6 +96,10 @@ export default class ClaudeCodeImporter extends BaseImporter {
       throw new Error(`安全限制: ${path} 是符号链接，拒绝写入`);
     }
     if (overwrite) {
+      // Overwrite still needs to be validated in case this helper is
+      // reached through a path that didn't pre-check (e.g. a future
+      // caller). cursor.ts follows the same pattern for symmetry.
+      validateContentSize(content);
       await writeFile(path, content, 'utf-8');
     } else {
       const existing = await readExistingFile(path);

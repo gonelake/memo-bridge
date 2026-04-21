@@ -121,6 +121,18 @@ describe('ClaudeCodeImporter', () => {
     expect(result.items_imported).toBe(8);
     expect(result.items_skipped).toBe(0);
   });
+
+  it('rejects oversized content in overwrite mode too', async () => {
+    // Regression for P1-2: overwrite used to write directly without
+    // running validateContentSize. Craft a payload larger than the 5MB
+    // write ceiling. buildClaudeMd copies every profile.identity entry
+    // verbatim, so stuffing a 6MB value there reliably overflows.
+    const data = makeData();
+    data.profile.identity['huge'] = 'x'.repeat(6 * 1024 * 1024);
+    await expect(
+      importer.import(data, { workspace: ws, overwrite: true }),
+    ).rejects.toThrowError(/安全限制/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -344,5 +356,164 @@ describe('CodeBuddyImporter', () => {
     } finally {
       process.chdir(originalCwd);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.2 M5 — Extensions write-back
+// ---------------------------------------------------------------------------
+
+describe('HermesImporter — extensions.hermes.skills write-back', () => {
+  const importer = new HermesImporter();
+
+  function dataWithSkills(skills: unknown): MemoBridgeData {
+    return {
+      ...makeData(),
+      extensions: { hermes: { skills } },
+    };
+  }
+
+  it('creates skill directories with a README stub', async () => {
+    const data = dataWithSkills(['code-review', 'doc-writer']);
+    await importer.import(data, { workspace: ws });
+
+    for (const name of ['code-review', 'doc-writer']) {
+      const dir = join(ws, 'skills', name);
+      expect(await fileExists(dir)).toBe(true);
+      const readme = join(dir, 'README.md');
+      expect(await fileExists(readme)).toBe(true);
+      const content = await readFile(readme, 'utf-8');
+      expect(content).toContain(`Skill: ${name}`);
+      expect(content).toContain('MemoBridge');
+    }
+  });
+
+  it('does not touch pre-existing skill directories', async () => {
+    // Pre-create one of the skills with actual content
+    const existing = join(ws, 'skills', 'code-review');
+    await mkdir(existing, { recursive: true });
+    await writeFile(join(existing, 'handler.py'), 'print("real skill")');
+
+    await importer.import(dataWithSkills(['code-review', 'doc-writer']), { workspace: ws });
+
+    // Pre-existing skill's contents must survive
+    expect(await readFile(join(existing, 'handler.py'), 'utf-8')).toBe('print("real skill")');
+    // Existing skill should NOT get a stub README (we didn't create the dir)
+    expect(await fileExists(join(existing, 'README.md'))).toBe(false);
+    // Newly-declared skill should have the stub
+    expect(await fileExists(join(ws, 'skills', 'doc-writer', 'README.md'))).toBe(true);
+  });
+
+  it('rejects skill names that try to escape the skills directory', async () => {
+    const data = dataWithSkills(['../../../etc', 'good-skill', '/abs/path', '.', '..']);
+    const result = await importer.import(data, { workspace: ws });
+
+    expect(await fileExists(join(ws, 'skills', 'good-skill'))).toBe(true);
+    // No file should have been created outside skills/
+    expect(await fileExists(join(ws, '..', 'etc'))).toBe(false);
+    expect(await fileExists(join(ws, 'skills', '..'))).toBe(true); // '..' resolves to skills itself — fine
+    expect(result.warnings?.some(w => w.includes('非法 skill 名'))).toBe(true);
+  });
+
+  it('silently ignores non-string entries in the skills array', async () => {
+    const data = dataWithSkills(['valid', 123, null, { a: 1 }, '']);
+    const result = await importer.import(data, { workspace: ws });
+    expect(await fileExists(join(ws, 'skills', 'valid', 'README.md'))).toBe(true);
+    expect(result.success).toBe(true);
+  });
+
+  it('is a no-op when extensions.hermes.skills is absent', async () => {
+    await importer.import(makeData(), { workspace: ws }); // no extensions
+    expect(await fileExists(join(ws, 'skills'))).toBe(false);
+  });
+
+  it('listTargets includes skill README paths for backup', () => {
+    const data = dataWithSkills(['skill-a', 'skill-b']);
+    const targets = importer.listTargets(data, { workspace: ws });
+    expect(targets).toContain(join(ws, 'skills', 'skill-a', 'README.md'));
+    expect(targets).toContain(join(ws, 'skills', 'skill-b', 'README.md'));
+  });
+});
+
+describe('OpenClawImporter — extensions.openclaw write-back', () => {
+  const importer = new OpenClawImporter();
+
+  it('writes SOUL.md when extensions.openclaw.soul is a non-empty string', async () => {
+    const data: MemoBridgeData = {
+      ...makeData(),
+      extensions: { openclaw: { soul: 'I am a thoughtful assistant.' } },
+    };
+    await importer.import(data, { workspace: ws });
+
+    const soulPath = join(ws, 'SOUL.md');
+    expect(await fileExists(soulPath)).toBe(true);
+    const content = await readFile(soulPath, 'utf-8');
+    expect(content).toContain('I am a thoughtful assistant.');
+    expect(content).toContain('MemoBridge'); // header tag
+  });
+
+  it('does not write SOUL.md when soul is absent or empty', async () => {
+    // Absent
+    await importer.import(makeData(), { workspace: ws });
+    expect(await fileExists(join(ws, 'SOUL.md'))).toBe(false);
+
+    // Empty string
+    const dataEmpty: MemoBridgeData = {
+      ...makeData(),
+      extensions: { openclaw: { soul: '   ' } },
+    };
+    await importer.import(dataEmpty, { workspace: ws });
+    expect(await fileExists(join(ws, 'SOUL.md'))).toBe(false);
+  });
+
+  it('writes DREAMS.md as a STUB (with char count) — honest about lost fidelity', async () => {
+    const data: MemoBridgeData = {
+      ...makeData(),
+      extensions: { openclaw: { dreams: { chars: 5432 } } },
+    };
+    const result = await importer.import(data, { workspace: ws });
+
+    const dreamsPath = join(ws, 'DREAMS.md');
+    expect(await fileExists(dreamsPath)).toBe(true);
+    const content = await readFile(dreamsPath, 'utf-8');
+    expect(content).toContain('stub');
+    expect(content).toContain('5432');
+
+    // Importer must warn about the partial fidelity
+    expect(result.warnings?.some(w => w.includes('DREAMS.md'))).toBe(true);
+  });
+
+  it('does not write DREAMS.md when dreams is absent', async () => {
+    await importer.import(makeData(), { workspace: ws });
+    expect(await fileExists(join(ws, 'DREAMS.md'))).toBe(false);
+  });
+
+  it('listTargets includes SOUL.md / DREAMS.md iff declared in extensions', () => {
+    const withBoth = importer.listTargets(
+      {
+        ...makeData(),
+        extensions: { openclaw: { soul: 's', dreams: { chars: 1 } } },
+      },
+      { workspace: ws },
+    );
+    expect(withBoth).toContain(join(ws, 'SOUL.md'));
+    expect(withBoth).toContain(join(ws, 'DREAMS.md'));
+
+    const without = importer.listTargets(makeData(), { workspace: ws });
+    expect(without).not.toContain(join(ws, 'SOUL.md'));
+    expect(without).not.toContain(join(ws, 'DREAMS.md'));
+  });
+
+  it('dry-run lists SOUL/DREAMS paths in its instructions', async () => {
+    const data: MemoBridgeData = {
+      ...makeData(),
+      extensions: { openclaw: { soul: 'x', dreams: { chars: 1 } } },
+    };
+    const result = await importer.import(data, { workspace: ws, dryRun: true });
+    expect(result.instructions).toContain('SOUL.md');
+    expect(result.instructions).toContain('DREAMS.md');
+    // Nothing should have actually been written
+    expect(await fileExists(join(ws, 'SOUL.md'))).toBe(false);
+    expect(await fileExists(join(ws, 'DREAMS.md'))).toBe(false);
   });
 });
