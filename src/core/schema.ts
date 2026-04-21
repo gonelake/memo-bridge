@@ -3,7 +3,7 @@
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { MemoBridgeData, MemoBridgeMeta, UserProfile, KnowledgeSection, ProjectContext, InformationFeed, Memory } from './types.js';
+import type { MemoBridgeData, MemoBridgeMeta, UserProfile, KnowledgeSection, ProjectContext, InformationFeed, Memory, ExtensionsMap } from './types.js';
 
 const FORMAT_VERSION = '0.1';
 const YAML_DELIMITER = '---';
@@ -22,7 +22,7 @@ export function parseMemoBridge(content: string): MemoBridgeData {
   const meta = parseMeta(frontMatter);
   const sections = splitSections(body);
 
-  return {
+  const data: MemoBridgeData = {
     meta,
     profile: parseProfile(sections['用户画像'] || sections['User Profile'] || ''),
     knowledge: parseKnowledge(sections['知识积累'] || sections['Knowledge'] || ''),
@@ -30,6 +30,11 @@ export function parseMemoBridge(content: string): MemoBridgeData {
     feeds: parseFeeds(sections['关注的信息流'] || sections['Information Feeds'] || ''),
     raw_memories: parseRawMemories(sections['原始记忆'] || sections['Raw Memories'] || ''),
   };
+
+  const extensions = parseExtensions(sections['扩展数据'] || sections['Extensions'] || '');
+  if (extensions) data.extensions = extensions;
+
+  return data;
 }
 
 /**
@@ -136,10 +141,28 @@ export function serializeMemoBridge(data: MemoBridgeData): string {
     lines.push('# 原始记忆');
     lines.push('');
     for (const memory of data.raw_memories) {
-      const meta = `<!-- source: ${memory.source} | confidence: ${memory.confidence} | ${memory.created_at || ''} -->`;
+      const parts: string[] = [
+        `source: ${memory.source}`,
+        `confidence: ${memory.confidence}`,
+      ];
+      if (memory.created_at) parts.push(`created: ${memory.created_at}`);
+      if (memory.updated_at) parts.push(`updated: ${memory.updated_at}`);
+      const meta = `<!-- ${parts.join(' | ')} -->`;
       lines.push(meta);
       lines.push(`- ${memory.content}`);
     }
+    lines.push('');
+  }
+
+  // Extensions (tool-specific data)
+  if (hasNonEmptyExtensions(data.extensions)) {
+    lines.push('---');
+    lines.push('');
+    lines.push('# 扩展数据');
+    lines.push('');
+    lines.push('```yaml');
+    lines.push(stringifyYaml(data.extensions).trim());
+    lines.push('```');
     lines.push('');
   }
 
@@ -296,7 +319,11 @@ function parseProjects(content: string): ProjectContext[] {
   let current: ProjectContext | null = null;
 
   for (const line of content.split('\n')) {
-    const h2Match = line.match(/^## (.+?)(?:[（(](进行中|已完成|暂停|active|completed|paused)[）)])?/);
+    // Match H2 title with optional trailing status in Chinese or English parentheses.
+    // The status group is anchored to the end of the line to avoid greedy-vs-lazy
+    // pitfalls that would otherwise truncate the name (e.g. `## MemoBridge（进行中）`
+    // would match name="M" with a lazy `.+?` followed by an optional group).
+    const h2Match = line.match(/^## (.+?)(?:\s*[（(](进行中|已完成|暂停|active|completed|paused)[）)]\s*)?$/i);
     if (h2Match) {
       if (current) projects.push(current);
       const statusMap: Record<string, 'active' | 'completed' | 'paused'> = {
@@ -326,10 +353,20 @@ function parseFeeds(content: string): InformationFeed[] {
     .filter(line => line.startsWith('- '))
     .map(line => {
       const parts = line.slice(2).split('|').map(p => p.trim());
+      // serialize emits "每日 <schedule>" / "<issues>期"; strip those prefixes/suffixes
+      // so round-tripping yields the original scalar values.
+      const scheduleRaw = parts[1];
+      const schedule = scheduleRaw
+        ? scheduleRaw.replace(/^每日\s+/, '')
+        : undefined;
+      const issuesRaw = parts[2];
+      const total_issues = issuesRaw
+        ? parseInt(issuesRaw.replace(/期$/, '')) || undefined
+        : undefined;
       return {
         name: parts[0] || '',
-        schedule: parts[1] || undefined,
-        total_issues: parts[2] ? parseInt(parts[2]) || undefined : undefined,
+        schedule,
+        total_issues,
       };
     });
 }
@@ -338,17 +375,36 @@ function parseRawMemories(content: string): Memory[] {
   if (!content) return [];
   const memories: Memory[] = [];
   const lines = content.split('\n');
-  let pendingMeta: { source: string; confidence: number; date?: string } | null = null;
+  let pendingMeta: {
+    source: string;
+    confidence: number;
+    created_at?: string;
+    updated_at?: string;
+  } | null = null;
 
   for (const line of lines) {
-    const metaMatch = line.match(/<!-- source: (.+?) \| confidence: ([\d.]+)(?: \| (.+?))? -->/);
-    if (metaMatch) {
-      pendingMeta = {
-        source: metaMatch[1],
-        confidence: parseFloat(metaMatch[2]),
-        date: metaMatch[3]?.trim() || undefined,
-      };
-      continue;
+    // Match `<!-- key1: value1 | key2: value2 | ... -->` and parse each k:v pair.
+    // Falls back to the legacy format `<!-- source: X | confidence: Y | DATE -->`
+    // where the trailing bare value is taken as created_at for backward compat.
+    const commentMatch = line.match(/<!--\s*(.+?)\s*-->/);
+    if (commentMatch) {
+      const raw = commentMatch[1];
+      const fields: Record<string, string> = {};
+      let legacyDate: string | undefined;
+      for (const segment of raw.split('|').map(s => s.trim())) {
+        const kv = segment.match(/^([a-zA-Z_]+):\s*(.+)$/);
+        if (kv) fields[kv[1].toLowerCase()] = kv[2].trim();
+        else if (segment) legacyDate = segment; // bare value (old format)
+      }
+      if (fields.source && fields.confidence) {
+        pendingMeta = {
+          source: fields.source,
+          confidence: parseFloat(fields.confidence),
+          created_at: fields.created || legacyDate,
+          updated_at: fields.updated,
+        };
+        continue;
+      }
     }
     if (line.startsWith('- ') && pendingMeta) {
       memories.push({
@@ -357,10 +413,52 @@ function parseRawMemories(content: string): Memory[] {
         category: 'general',
         source: pendingMeta.source,
         confidence: pendingMeta.confidence,
-        created_at: pendingMeta.date,
+        created_at: pendingMeta.created_at,
+        updated_at: pendingMeta.updated_at,
       });
       pendingMeta = null;
     }
   }
   return memories;
+}
+
+/**
+ * Parse the `# 扩展数据` section content. The section body is expected to
+ * contain a fenced ```yaml ... ``` block. Returns undefined if the section
+ * is absent, empty, or the YAML is malformed.
+ */
+function parseExtensions(content: string): ExtensionsMap | undefined {
+  if (!content.trim()) return undefined;
+
+  // Extract the yaml-fenced block body. Be forgiving about the fence style
+  // — accept ```yaml or ```yml, and also bare ``` fences.
+  const fenceMatch = content.match(/```(?:yaml|yml)?\s*\n([\s\S]*?)\n```/);
+  const yamlBody = fenceMatch ? fenceMatch[1] : content;
+
+  if (yamlBody.length > 100_000) return undefined; // guard against huge inputs
+
+  try {
+    const parsed = parseYaml(yamlBody, { maxAliasCount: 10 });
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    // Coerce to ExtensionsMap shape; only keep values that are objects
+    const out: ExtensionsMap = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        out[key] = value as Record<string, unknown>;
+      }
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasNonEmptyExtensions(ext: ExtensionsMap | undefined): boolean {
+  if (!ext) return false;
+  for (const value of Object.values(ext)) {
+    if (value && typeof value === 'object' && Object.keys(value).length > 0) {
+      return true;
+    }
+  }
+  return false;
 }

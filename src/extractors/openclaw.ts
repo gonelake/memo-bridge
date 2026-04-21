@@ -10,21 +10,21 @@
  *   ~/.openclaw/workspace/AGENTS.md          — workspace instructions
  */
 
-import { readFile, readdir } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
-import { BaseExtractor } from './base.js';
-import { detectTool } from '../core/detector.js';
+import { BaseExtractor, type DetectConfig } from './base.js';
 import { scanAndRedact } from '../core/privacy.js';
 import { log } from '../utils/logger.js';
-import type { DetectResult, ExtractOptions, MemoBridgeData } from '../core/types.js';
+import type { ExtractOptions, MemoBridgeData } from '../core/types.js';
 
 export default class OpenClawExtractor extends BaseExtractor {
   readonly toolId = 'openclaw' as const;
-
-  async detect(): Promise<DetectResult> {
-    return detectTool('openclaw');
-  }
+  readonly detectConfig: DetectConfig = {
+    globalPaths: ['~/.openclaw'],
+    workspaceMarkers: ['MEMORY.md', 'SOUL.md'],
+    description: 'OpenClaw workspace with MEMORY.md, SOUL.md, daily logs',
+  };
 
   async extract(options: ExtractOptions): Promise<MemoBridgeData> {
     const wsPath = options.workspace || join(homedir(), '.openclaw', 'workspace');
@@ -46,16 +46,14 @@ export default class OpenClawExtractor extends BaseExtractor {
       this.parseUserMd(userContent, data);
     }
 
-    // 3. SOUL.md — personality (store as raw memory for portability)
+    // 3. SOUL.md — personality (stored as tool-specific extension)
     const soulContent = await this.readFileSafe(join(wsPath, 'SOUL.md'));
     if (soulContent) {
-      data.raw_memories.push({
-        id: 'openclaw-soul',
-        content: soulContent.slice(0, 500),
-        category: 'personality',
-        source: 'SOUL.md',
-        confidence: 1.0,
-      });
+      data.extensions ??= {};
+      data.extensions.openclaw = {
+        ...data.extensions.openclaw,
+        soul: soulContent.slice(0, 500),
+      };
     }
 
     // 4. Daily notes — memory/YYYY-MM-DD.md
@@ -73,16 +71,14 @@ export default class OpenClawExtractor extends BaseExtractor {
       }
     }
 
-    // 5. DREAMS.md — dreaming journal (metadata only)
+    // 5. DREAMS.md — dreaming journal (stored as tool-specific extension metadata)
     const dreamsContent = await this.readFileSafe(join(wsPath, 'DREAMS.md'));
     if (dreamsContent) {
-      data.raw_memories.push({
-        id: 'openclaw-dreams',
-        content: `OpenClaw Dreaming journal exists (${dreamsContent.length} chars)`,
-        category: 'meta',
-        source: 'DREAMS.md',
-        confidence: 0.9,
-      });
+      data.extensions ??= {};
+      data.extensions.openclaw = {
+        ...data.extensions.openclaw,
+        dreams: { chars: dreamsContent.length },
+      };
     }
 
     // Update stats
@@ -164,10 +160,6 @@ export default class OpenClawExtractor extends BaseExtractor {
         }
       }
     }
-  }
-
-  private async readFileSafe(filePath: string): Promise<string | null> {
-    try { return await readFile(filePath, 'utf-8'); } catch { return null; }
   }
 
   private async listMdFiles(dir: string): Promise<string[]> {

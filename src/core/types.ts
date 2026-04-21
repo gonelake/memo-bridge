@@ -31,6 +31,12 @@ export const TOOL_NAMES: Record<ToolId, string> = {
   kimi: 'Kimi',
 };
 
+/** Runtime type guard for ToolId. Use before passing strings from external
+ * sources (CLI args, config files, parsed JSON) to registry.get(). */
+export function isToolId(value: unknown): value is ToolId {
+  return typeof value === 'string' && (TOOL_IDS as readonly string[]).includes(value);
+}
+
 export type ExtractionMethod = 'file' | 'api' | 'prompt_guided' | 'chat_reverse';
 
 // ============================================================
@@ -106,6 +112,24 @@ export interface InformationFeed {
   latest_date?: string;
 }
 
+/**
+ * Tool-specific structured data that doesn't fit into the common sections.
+ * Keyed by ToolId (or arbitrary string), each tool owns its namespace.
+ *
+ * Example:
+ *   {
+ *     hermes: { skills: ['code-review', 'doc-writer'] },
+ *     openclaw: { soul: '...', dreams: { chars: 1234 } },
+ *   }
+ *
+ * Importers typically ignore extensions — the data is tool-specific and
+ * usually not portable across tools. An importer MAY opt in to read its
+ * own namespace back (e.g. a Hermes importer reading `extensions.hermes`).
+ */
+export interface ExtensionsMap {
+  [toolId: string]: Record<string, unknown>;
+}
+
 export interface MemoBridgeData {
   meta: MemoBridgeMeta;
   profile: UserProfile;
@@ -113,6 +137,8 @@ export interface MemoBridgeData {
   projects: ProjectContext[];
   feeds: InformationFeed[];
   raw_memories: Memory[];
+  /** Optional tool-specific structured data, keyed by ToolId. */
+  extensions?: ExtensionsMap;
 }
 
 // ============================================================
@@ -163,7 +189,8 @@ export interface DetectResult {
 export interface Extractor {
   readonly toolId: ToolId;
   readonly toolName: string;
-  detect(): Promise<DetectResult>;
+  /** Detect tool availability. Pass workspacePath to check workspace markers. */
+  detect(workspacePath?: string): Promise<DetectResult>;
   extract(options: ExtractOptions): Promise<MemoBridgeData>;
 }
 

@@ -1,84 +1,20 @@
 /**
  * MemoBridge — Tool detector
- * Auto-detect installed AI tools and scan for all workspaces
+ *
+ * Detection is delegated to the Extractor adapters registered in
+ * `extractorRegistry`. This module provides:
+ *  - `detectTool(toolId, workspace?)` — detect a single tool via registry
+ *  - `detectAllTools(workspace?)` — detect every registered tool
+ *  - `scanCodeBuddyWorkspaces` / `autoDiscoverCodeBuddyWorkspaces` —
+ *    CodeBuddy-specific multi-workspace scanning helpers
  */
 
-import { access, readdir, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { extractorRegistry } from './registry.js';
 import type { DetectResult, ToolId, WorkspaceInfo } from './types.js';
 import { TOOL_NAMES } from './types.js';
-
-interface ToolDetectionConfig {
-  tool: ToolId;
-  globalPaths: string[];         // 全局路径（用户主目录下）
-  workspaceMarkers: string[];    // 工作区内的标记文件/目录
-  description: string;
-}
-
-function expandHome(p: string): string {
-  return p.replace(/^~/, homedir());
-}
-
-const DETECTION_CONFIGS: ToolDetectionConfig[] = [
-  {
-    tool: 'codebuddy',
-    globalPaths: ['~/.codebuddy'],
-    workspaceMarkers: ['.codebuddy', '.memory'],
-    description: 'CodeBuddy automations and memory files',
-  },
-  {
-    tool: 'openclaw',
-    globalPaths: ['~/.openclaw'],
-    workspaceMarkers: ['MEMORY.md', 'SOUL.md'],
-    description: 'OpenClaw workspace with MEMORY.md, SOUL.md, daily logs',
-  },
-  {
-    tool: 'hermes',
-    globalPaths: ['~/.hermes'],
-    workspaceMarkers: [],
-    description: 'Hermes Agent with MEMORY.md and USER.md',
-  },
-  {
-    tool: 'claude-code',
-    globalPaths: ['~/.claude'],
-    workspaceMarkers: ['CLAUDE.md'],
-    description: 'Claude Code with CLAUDE.md project memory',
-  },
-  {
-    tool: 'cursor',
-    globalPaths: ['~/.cursor'],
-    workspaceMarkers: ['.cursorrules', '.cursor'],
-    description: 'Cursor IDE with .cursorrules',
-  },
-  {
-    tool: 'chatgpt',
-    globalPaths: [],
-    workspaceMarkers: [],
-    description: 'ChatGPT Memory (cloud-based, requires prompt export)',
-  },
-  {
-    tool: 'doubao',
-    globalPaths: [],
-    workspaceMarkers: [],
-    description: '豆包 Memory (cloud-based, requires prompt export)',
-  },
-  {
-    tool: 'kimi',
-    globalPaths: [],
-    workspaceMarkers: [],
-    description: 'Kimi (cloud-based, requires prompt export)',
-  },
-];
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function isDirectory(filePath: string): Promise<boolean> {
   try {
@@ -100,64 +36,28 @@ async function countFiles(dir: string, pattern?: RegExp): Promise<number> {
 }
 
 /**
- * Detect a single tool (global presence)
+ * Detect a single tool via its registered Extractor.
+ * Returns a default "not detected" result if the tool is not registered.
  */
 export async function detectTool(toolId: ToolId, workspacePath?: string): Promise<DetectResult> {
-  const config = DETECTION_CONFIGS.find(c => c.tool === toolId);
-  if (!config) {
+  if (!extractorRegistry.has(toolId)) {
     return { tool: toolId, name: TOOL_NAMES[toolId], detected: false };
   }
-
-  // Cloud-based tools
-  if (config.globalPaths.length === 0 && config.workspaceMarkers.length === 0) {
-    return {
-      tool: toolId,
-      name: TOOL_NAMES[toolId],
-      detected: true,
-      details: `${config.description} — use 'memo-bridge prompt' to export`,
-    };
-  }
-
-  const detectedPaths: string[] = [];
-
-  // Check global paths
-  for (const p of config.globalPaths) {
-    const expanded = expandHome(p);
-    if (await pathExists(expanded)) {
-      detectedPaths.push(expanded);
-    }
-  }
-
-  // Check workspace markers
-  if (workspacePath) {
-    for (const marker of config.workspaceMarkers) {
-      const markerPath = join(workspacePath, marker);
-      if (await pathExists(markerPath)) {
-        detectedPaths.push(markerPath);
-      }
-    }
-  }
-
-  return {
-    tool: toolId,
-    name: TOOL_NAMES[toolId],
-    detected: detectedPaths.length > 0,
-    paths: detectedPaths.length > 0 ? detectedPaths : undefined,
-    details: detectedPaths.length > 0 ? config.description : undefined,
-  };
+  const extractor = extractorRegistry.get(toolId);
+  return extractor.detect(workspacePath);
 }
 
 /**
- * Detect all supported tools
+ * Detect all registered tools. Order follows the registry's registration order.
  */
 export async function detectAllTools(workspacePath?: string): Promise<DetectResult[]> {
   return Promise.all(
-    DETECTION_CONFIGS.map(config => detectTool(config.tool, workspacePath))
+    extractorRegistry.list().map(toolId => detectTool(toolId, workspacePath)),
   );
 }
 
 // ============================================================
-// Multi-workspace scanning
+// Multi-workspace scanning (CodeBuddy specific)
 // ============================================================
 
 const SCAN_IGNORE = new Set([
@@ -165,6 +65,10 @@ const SCAN_IGNORE = new Set([
   '.local', '.config', '.vscode', '.idea', 'dist', 'build',
   '__pycache__', '.tox', '.venv', 'venv', 'env',
 ]);
+
+// Hard ceiling on how many directory entries we'll examine during a scan.
+// Prevents pathological directory trees from hanging the CLI.
+const SCAN_MAX_ENTRIES = 5000;
 
 /**
  * Scan a directory tree for all CodeBuddy workspaces
@@ -175,7 +79,8 @@ export async function scanCodeBuddyWorkspaces(
   maxDepth: number = 4,
 ): Promise<WorkspaceInfo[]> {
   const workspaces: WorkspaceInfo[] = [];
-  await scanDir(rootDir, 0, maxDepth, workspaces);
+  const budget = { remaining: SCAN_MAX_ENTRIES };
+  await scanDir(rootDir, 0, maxDepth, workspaces, budget);
   return workspaces;
 }
 
@@ -184,8 +89,10 @@ async function scanDir(
   depth: number,
   maxDepth: number,
   results: WorkspaceInfo[],
+  budget: { remaining: number },
 ): Promise<void> {
   if (depth > maxDepth) return;
+  if (budget.remaining <= 0) return;
 
   let entries: string[];
   try {
@@ -193,6 +100,7 @@ async function scanDir(
   } catch {
     return; // Permission denied or other error
   }
+  budget.remaining -= entries.length;
 
   const hasCodebuddy = entries.includes('.codebuddy');
   const hasMemory = entries.includes('.memory');
@@ -234,7 +142,7 @@ async function scanDir(
       if (await isDirectory(fullPath)) {
         // Don't recurse into found workspaces' subdirectories beyond markers
         if (subdir !== '.codebuddy' && subdir !== '.memory') {
-          await scanDir(fullPath, depth + 1, maxDepth, results);
+          await scanDir(fullPath, depth + 1, maxDepth, results, budget);
         }
       }
     }

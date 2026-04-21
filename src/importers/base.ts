@@ -2,6 +2,7 @@
  * MemoBridge — Importer base class
  */
 
+import { readFile } from 'node:fs/promises';
 import type { Importer, ToolId, MemoBridgeData, ImportOptions, ImportResult } from '../core/types.js';
 import { TOOL_NAMES } from '../core/types.js';
 
@@ -79,6 +80,22 @@ export abstract class BaseImporter implements Importer {
     return data.raw_memories.length + data.projects.length + data.feeds.length +
       data.knowledge.reduce((n, s) => n + s.items.length, 0) +
       Object.keys(data.profile.identity).length +
-      Object.keys(data.profile.preferences).length;
+      Object.keys(data.profile.preferences).length +
+      Object.keys(data.profile.work_patterns).length;
+  }
+}
+
+/**
+ * Read an existing file's contents for append-mode operations.
+ * Returns '' if the file does not exist (ENOENT is expected for first write).
+ * Propagates other errors (EACCES, EISDIR, etc.) so callers don't silently
+ * corrupt the output when permissions are wrong.
+ */
+export async function readExistingFile(path: string): Promise<string> {
+  try {
+    return await readFile(path, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw err;
   }
 }

@@ -14,6 +14,11 @@ import type { MemoBridgeData, ImportOptions, ImportResult } from '../core/types.
 const MEMORY_CHAR_LIMIT = 2200;
 const USER_CHAR_LIMIT = 1375;
 
+/** Return the UTF-8 byte length of a string (matches on-disk file size). */
+function byteLength(s: string): number {
+  return Buffer.byteLength(s, 'utf-8');
+}
+
 export default class HermesImporter extends BaseImporter {
   readonly toolId = 'hermes' as const;
 
@@ -23,7 +28,8 @@ export default class HermesImporter extends BaseImporter {
     const maxMemory = options.maxChars || MEMORY_CHAR_LIMIT;
     const warnings: string[] = [];
 
-    const memoryContent = this.buildMemoryContent(data, maxMemory);
+    const { content: memoryContent, truncated: memoryTruncated } =
+      this.buildMemoryContent(data, maxMemory);
     const userContent = this.buildUserContent(data, USER_CHAR_LIMIT);
 
     if (options.dryRun) {
@@ -31,8 +37,8 @@ export default class HermesImporter extends BaseImporter {
         success: true, method: 'file_write',
         items_imported: this.countImported(data), items_skipped: 0,
         output_path: memoriesDir,
-        instructions: `[DRY RUN] 将写入:\n  MEMORY.md (${memoryContent.length}/${maxMemory} 字符)\n  USER.md (${userContent.length}/${USER_CHAR_LIMIT} 字符)`,
-        warnings: memoryContent.length >= maxMemory ? ['MEMORY.md 已达字符上限，部分记忆被裁剪'] : [],
+        instructions: `[DRY RUN] 将写入:\n  MEMORY.md (${byteLength(memoryContent)}/${maxMemory} bytes)\n  USER.md (${byteLength(userContent)}/${USER_CHAR_LIMIT} bytes)`,
+        warnings: memoryTruncated ? [`MEMORY.md 已达 ${maxMemory} 字节上限，部分记忆被裁剪`] : [],
       };
     }
 
@@ -44,13 +50,16 @@ export default class HermesImporter extends BaseImporter {
       throw new Error(`安全限制: ${memoryPath} 是符号链接，拒绝写入`);
     }
     await writeFile(memoryPath, memoryContent, 'utf-8');
-    if (memoryContent.length >= maxMemory) {
-      warnings.push(`MEMORY.md 已达 ${maxMemory} 字符上限，部分记忆被裁剪`);
+    if (memoryTruncated) {
+      warnings.push(`MEMORY.md 已达 ${maxMemory} 字节上限，部分记忆被裁剪`);
     }
 
     // Write USER.md
     const userPath = join(memoriesDir, 'USER.md');
     if (userContent.trim()) {
+      if (!await isNotSymlink(userPath)) {
+        throw new Error(`安全限制: ${userPath} 是符号链接，拒绝写入`);
+      }
       await writeFile(userPath, userContent, 'utf-8');
     }
 
@@ -62,11 +71,16 @@ export default class HermesImporter extends BaseImporter {
   }
 
   /**
-   * Build MEMORY.md content within character limit
-   * Uses § as separator (Hermes convention)
-   * Prioritizes: projects > knowledge summaries > high-confidence memories
+   * Build MEMORY.md content within character limit.
+   * Uses § as separator (Hermes convention).
+   * Prioritizes: projects > knowledge summaries > high-confidence memories.
+   *
+   * Returns both the serialized content and a `truncated` flag indicating
+   * whether any entries were dropped due to the char budget. The flag is
+   * authoritative — don't infer truncation from `content.length >= maxChars`,
+   * because the fitting loop always stops before the budget is exceeded.
    */
-  private buildMemoryContent(data: MemoBridgeData, maxChars: number): string {
+  private buildMemoryContent(data: MemoBridgeData, maxChars: number): { content: string; truncated: boolean } {
     const entries: Array<{ text: string; priority: number }> = [];
 
     // Projects (highest priority)
@@ -96,16 +110,22 @@ export default class HermesImporter extends BaseImporter {
     entries.sort((a, b) => b.priority - a.priority);
 
     const result: string[] = [];
-    let currentLength = 0;
+    let currentBytes = 0;
+    let truncated = false;
 
     for (const entry of entries) {
-      const addition = entry.text + '§';
-      if (currentLength + addition.length > maxChars) break;
+      // Measure bytes (UTF-8) rather than string.length (UTF-16 code units)
+      // so the on-disk file never exceeds Hermes' byte-oriented limit.
+      const additionBytes = byteLength(entry.text) + 1; // +1 for the § separator
+      if (currentBytes + additionBytes > maxChars) {
+        truncated = true;
+        break;
+      }
       result.push(entry.text);
-      currentLength += addition.length;
+      currentBytes += additionBytes;
     }
 
-    return result.join('§');
+    return { content: result.join('§'), truncated };
   }
 
   private buildUserContent(data: MemoBridgeData, maxChars: number): string {
@@ -122,8 +142,13 @@ export default class HermesImporter extends BaseImporter {
     }
 
     let result = entries.join('§');
-    if (result.length > maxChars) {
-      result = result.slice(0, maxChars - 3) + '...';
+    // Byte-aware truncation: slice until the UTF-8 encoded length fits.
+    // Using .slice() on a code-point boundary avoids splitting multi-byte chars.
+    if (byteLength(result) > maxChars) {
+      while (byteLength(result) > maxChars - 3 && result.length > 0) {
+        result = result.slice(0, -1);
+      }
+      result += '...';
     }
     return result;
   }

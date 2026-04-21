@@ -3,9 +3,9 @@
  * Writes to: .cursorrules (project-level)
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { BaseImporter } from './base.js';
+import { BaseImporter, readExistingFile } from './base.js';
 import { validateWritePath, validateContentSize, isNotSymlink } from '../utils/security.js';
 import type { MemoBridgeData, ImportOptions, ImportResult } from '../core/types.js';
 
@@ -76,7 +76,7 @@ export default class CursorImporter extends BaseImporter {
       validateContentSize(content);
       await writeFile(path, content, 'utf-8');
     } else {
-      const existing = await readFile(path, 'utf-8').catch(() => '');
+      const existing = await readExistingFile(path);
       const combined = existing + '\n' + content;
       validateContentSize(combined);
       await writeFile(path, combined, 'utf-8');

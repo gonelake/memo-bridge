@@ -8,24 +8,32 @@
  *   <project>/CLAUDE.md                  — project-level instructions
  */
 
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { BaseExtractor } from './base.js';
-import { detectTool } from '../core/detector.js';
+import { BaseExtractor, type DetectConfig } from './base.js';
 import { scanAndRedact } from '../core/privacy.js';
 import { log } from '../utils/logger.js';
-import type { DetectResult, ExtractOptions, MemoBridgeData } from '../core/types.js';
+import type { ExtractOptions, MemoBridgeData } from '../core/types.js';
 
 export default class ClaudeCodeExtractor extends BaseExtractor {
   readonly toolId = 'claude-code' as const;
+  readonly detectConfig: DetectConfig = {
+    globalPaths: ['~/.claude'],
+    workspaceMarkers: ['CLAUDE.md'],
+    description: 'Claude Code with CLAUDE.md project memory',
+  };
 
-  async detect(): Promise<DetectResult> {
-    return detectTool('claude-code');
+  /**
+   * Return the path to the global ~/.claude directory.
+   * Subclasses (or tests) may override this to point elsewhere.
+   */
+  protected getGlobalDir(): string {
+    return join(homedir(), '.claude');
   }
 
   async extract(options: ExtractOptions): Promise<MemoBridgeData> {
-    const claudeDir = join(homedir(), '.claude');
+    const claudeDir = this.getGlobalDir();
     const data = this.createEmptyData(claudeDir);
 
     if (options.verbose) log.info(`扫描 Claude Code: ${claudeDir}`);
@@ -108,14 +116,6 @@ export default class ClaudeCodeExtractor extends BaseExtractor {
         });
       }
     }
-  }
-
-  private async readFileSafe(p: string): Promise<string | null> {
-    try { return await readFile(p, 'utf-8'); } catch { return null; }
-  }
-
-  private async dirExists(p: string): Promise<boolean> {
-    try { return (await stat(p)).isDirectory(); } catch { return false; }
   }
 
   private countCategories(data: MemoBridgeData): number {

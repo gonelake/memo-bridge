@@ -11,6 +11,13 @@
   <a href="#commands--命令参考">Commands / 命令</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/gonelake/memo-bridge/actions/workflows/ci.yml"><img src="https://github.com/gonelake/memo-bridge/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/memo-bridge"><img src="https://img.shields.io/npm/v/memo-bridge.svg" alt="npm version"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/memo-bridge.svg" alt="License"></a>
+  <img src="https://img.shields.io/node/v/memo-bridge.svg" alt="Node version">
+</p>
+
 ---
 
 ## Why MemoBridge / 为什么需要 MemoBridge？

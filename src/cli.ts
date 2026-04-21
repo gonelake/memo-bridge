@@ -6,47 +6,14 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { detectAllTools } from './core/detector.js';
-import { TOOL_NAMES, type ToolId, type Extractor, type Importer } from './core/types.js';
+import { extractorRegistry, importerRegistry } from './core/registry.js';
+import { TOOL_NAMES, isToolId, type ToolId } from './core/types.js';
 import { log } from './utils/logger.js';
 import { validateWritePath, sanitizePath, validateContentSize } from './utils/security.js';
 import { getExportPromptForTool } from './prompts/index.js';
-import CodeBuddyExtractor from './extractors/codebuddy.js';
-import OpenClawExtractor from './extractors/openclaw.js';
-import HermesExtractor from './extractors/hermes.js';
-import ClaudeCodeExtractor from './extractors/claude-code.js';
-import CursorExtractor from './extractors/cursor.js';
 
-// Extractor registry (static imports, no dynamic import issues)
-function getExtractor(toolId: ToolId): Extractor {
-  switch (toolId) {
-    case 'codebuddy': return new CodeBuddyExtractor();
-    case 'openclaw': return new OpenClawExtractor();
-    case 'hermes': return new HermesExtractor();
-    case 'claude-code': return new ClaudeCodeExtractor();
-    case 'cursor': return new CursorExtractor();
-    default: throw new Error(`提取器 "${toolId}" 尚未实现。支持: codebuddy, openclaw, hermes, claude-code, cursor`);
-  }
-}
-
-import OpenClawImporter from './importers/openclaw.js';
-import HermesImporter from './importers/hermes.js';
-import ClaudeCodeImporter from './importers/claude-code.js';
-import CursorImporter from './importers/cursor.js';
-import { ChatGPTImporter, DouBaoImporter, KimiImporter, CodeBuddyImporter } from './importers/instruction-based.js';
-
-function getImporter(toolId: ToolId): Importer {
-  switch (toolId) {
-    case 'codebuddy': return new CodeBuddyImporter();
-    case 'openclaw': return new OpenClawImporter();
-    case 'hermes': return new HermesImporter();
-    case 'claude-code': return new ClaudeCodeImporter();
-    case 'cursor': return new CursorImporter();
-    case 'chatgpt': return new ChatGPTImporter();
-    case 'doubao': return new DouBaoImporter();
-    case 'kimi': return new KimiImporter();
-    default: throw new Error(`导入器 "${toolId}" 尚未实现。`);
-  }
-}
+// Register all built-in adapters (side effect)
+import './registry/defaults.js';
 
 const program = new Command();
 
@@ -110,17 +77,17 @@ program
   .option('-o, --output <path>', '输出文件路径', './memo-bridge.md')
   .option('-v, --verbose', '详细输出')
   .action(async (options: { from: string; workspace?: string; scanDir?: string; output: string; verbose?: boolean }) => {
-    const toolId = options.from as ToolId;
-    if (!TOOL_NAMES[toolId]) {
+    if (!isToolId(options.from)) {
       log.error(`未知工具: ${options.from}。支持的工具: ${Object.keys(TOOL_NAMES).join(', ')}`);
       process.exit(1);
     }
+    const toolId: ToolId = options.from;
 
     log.header(`MemoBridge — 从 ${TOOL_NAMES[toolId]} 导出记忆`);
     log.info('提取器加载中...');
 
     try {
-      const extractor = getExtractor(toolId);
+      const extractor = extractorRegistry.get(toolId);
       const data = await extractor.extract({ workspace: options.workspace, scanDir: options.scanDir, verbose: options.verbose });
 
       // Serialize to file with security checks
@@ -150,16 +117,20 @@ program
   .description('获取 AI 记忆导出提示词 / Get export prompt for an AI tool')
   .requiredOption('-f, --for <tool>', '目标工具')
   .action(async (options: { for: string }) => {
-    const toolId = options.for as ToolId;
-    log.header(`MemoBridge — ${TOOL_NAMES[toolId] || options.for} 导出提示词`);
+    if (!isToolId(options.for)) {
+      log.error(`未知工具: ${options.for}。支持: ${Object.keys(TOOL_NAMES).join(', ')}`);
+      process.exit(1);
+    }
+    const toolId: ToolId = options.for;
+    log.header(`MemoBridge — ${TOOL_NAMES[toolId]} 导出提示词`);
 
-    const prompt = getExportPromptForTool(toolId, TOOL_NAMES[toolId] || options.for);
+    const prompt = getExportPromptForTool(toolId, TOOL_NAMES[toolId]);
     console.log(chalk.dim('─'.repeat(60)));
     console.log('');
     console.log(prompt);
     console.log('');
     console.log(chalk.dim('─'.repeat(60)));
-    log.info(`将以上内容复制到 ${TOOL_NAMES[toolId] || options.for} 的对话中发送`);
+    log.info(`将以上内容复制到 ${TOOL_NAMES[toolId]} 的对话中发送`);
   });
 
 // import command placeholder
@@ -172,11 +143,11 @@ program
   .option('--overwrite', '覆盖已有内容')
   .option('--dry-run', '预览模式，不实际写入')
   .action(async (options: { to: string; input: string; workspace?: string; overwrite?: boolean; dryRun?: boolean }) => {
-    const toolId = options.to as ToolId;
-    if (!TOOL_NAMES[toolId]) {
-      log.error(`未知工具: ${options.to}`);
+    if (!isToolId(options.to)) {
+      log.error(`未知工具: ${options.to}。支持的工具: ${Object.keys(TOOL_NAMES).join(', ')}`);
       process.exit(1);
     }
+    const toolId: ToolId = options.to;
 
     log.header(`MemoBridge — 导入记忆到 ${TOOL_NAMES[toolId]}`);
 
@@ -195,7 +166,7 @@ program
       const content = await readFile(inputPath, 'utf-8');
       const data = parseMemoBridge(content);
 
-      const importer = getImporter(toolId);
+      const importer = importerRegistry.get(toolId);
       const result = await importer.import(data, {
         workspace: options.workspace,
         overwrite: options.overwrite,
@@ -229,20 +200,30 @@ program
   .option('-w, --workspace <path>', '来源工作区路径')
   .option('--dry-run', '预览模式')
   .action(async (options: { from: string; to: string; workspace?: string; dryRun?: boolean }) => {
-    log.header(`MemoBridge — 迁移 ${TOOL_NAMES[options.from as ToolId] || options.from} → ${TOOL_NAMES[options.to as ToolId] || options.to}`);
+    if (!isToolId(options.from)) {
+      log.error(`未知来源工具: ${options.from}。支持: ${Object.keys(TOOL_NAMES).join(', ')}`);
+      process.exit(1);
+    }
+    if (!isToolId(options.to)) {
+      log.error(`未知目标工具: ${options.to}。支持: ${Object.keys(TOOL_NAMES).join(', ')}`);
+      process.exit(1);
+    }
+    const fromId: ToolId = options.from;
+    const toId: ToolId = options.to;
+    log.header(`MemoBridge — 迁移 ${TOOL_NAMES[fromId]} → ${TOOL_NAMES[toId]}`);
     log.info('Step 1/3: 导出记忆...');
 
     try {
       // Extract
-      const extractor = getExtractor(options.from as ToolId);
+      const extractor = extractorRegistry.get(fromId);
       const data = await extractor.extract({ workspace: options.workspace });
 
       log.info(`Step 2/3: 转换格式...`);
       log.table('记忆条数', data.meta.stats.total_memories);
 
       // Import
-      log.info(`Step 3/3: 导入到 ${TOOL_NAMES[options.to as ToolId] || options.to}...`);
-      const importer = getImporter(options.to as ToolId);
+      log.info(`Step 3/3: 导入到 ${TOOL_NAMES[toId]}...`);
+      const importer = importerRegistry.get(toId);
       const result = await importer.import(data, { dryRun: options.dryRun });
 
       if (result.success) {

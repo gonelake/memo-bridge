@@ -12,21 +12,21 @@
  * Capacity header: "MEMORY [67% — 1,474/2,200 chars]"
  */
 
-import { readFile, readdir } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { BaseExtractor } from './base.js';
-import { detectTool } from '../core/detector.js';
+import { BaseExtractor, type DetectConfig } from './base.js';
 import { scanAndRedact } from '../core/privacy.js';
 import { log } from '../utils/logger.js';
-import type { DetectResult, ExtractOptions, MemoBridgeData } from '../core/types.js';
+import type { ExtractOptions, MemoBridgeData } from '../core/types.js';
 
 export default class HermesExtractor extends BaseExtractor {
   readonly toolId = 'hermes' as const;
-
-  async detect(): Promise<DetectResult> {
-    return detectTool('hermes');
-  }
+  readonly detectConfig: DetectConfig = {
+    globalPaths: ['~/.hermes'],
+    workspaceMarkers: [],
+    description: 'Hermes Agent with MEMORY.md and USER.md',
+  };
 
   async extract(options: ExtractOptions): Promise<MemoBridgeData> {
     const hermesDir = options.workspace || join(homedir(), '.hermes');
@@ -48,17 +48,12 @@ export default class HermesExtractor extends BaseExtractor {
       this.parseHermesUser(userContent, data);
     }
 
-    // 3. Skills directory — auto-generated skills
+    // 3. Skills directory — auto-generated skills (stored as tool-specific extension)
     const skillsDir = join(hermesDir, 'skills');
     const skills = await this.listDirs(skillsDir);
     if (skills.length > 0) {
-      data.raw_memories.push({
-        id: 'hermes-skills',
-        content: `Hermes auto-generated skills: ${skills.join(', ')}`,
-        category: 'skills',
-        source: '~/.hermes/skills/',
-        confidence: 1.0,
-      });
+      data.extensions ??= {};
+      data.extensions.hermes = { ...data.extensions.hermes, skills };
     }
 
     // 4. config.yaml — extract model and platform info
@@ -176,10 +171,6 @@ export default class HermesExtractor extends BaseExtractor {
         lowerKey.includes('docker') || lowerKey.includes('shell') || lowerKey.includes('editor')) {
       data.profile.work_patterns[key] = value;
     }
-  }
-
-  private async readFileSafe(filePath: string): Promise<string | null> {
-    try { return await readFile(filePath, 'utf-8'); } catch { return null; }
   }
 
   private async listDirs(dir: string): Promise<string[]> {

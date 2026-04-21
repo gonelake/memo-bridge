@@ -7,24 +7,32 @@
  *   <project>/.cursor/rules/*.md   — project cursor rules
  */
 
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { BaseExtractor } from './base.js';
-import { detectTool } from '../core/detector.js';
+import { BaseExtractor, type DetectConfig } from './base.js';
 import { scanAndRedact } from '../core/privacy.js';
 import { log } from '../utils/logger.js';
-import type { DetectResult, ExtractOptions, MemoBridgeData } from '../core/types.js';
+import type { ExtractOptions, MemoBridgeData } from '../core/types.js';
 
 export default class CursorExtractor extends BaseExtractor {
   readonly toolId = 'cursor' as const;
+  readonly detectConfig: DetectConfig = {
+    globalPaths: ['~/.cursor'],
+    workspaceMarkers: ['.cursorrules', '.cursor'],
+    description: 'Cursor IDE with .cursorrules',
+  };
 
-  async detect(): Promise<DetectResult> {
-    return detectTool('cursor');
+  /**
+   * Return the path to the global ~/.cursor directory.
+   * Subclasses (or tests) may override this to point elsewhere.
+   */
+  protected getGlobalDir(): string {
+    return join(homedir(), '.cursor');
   }
 
   async extract(options: ExtractOptions): Promise<MemoBridgeData> {
-    const cursorDir = join(homedir(), '.cursor');
+    const cursorDir = this.getGlobalDir();
     const data = this.createEmptyData(cursorDir);
 
     if (options.verbose) log.info(`扫描 Cursor: ${cursorDir}`);
@@ -103,14 +111,6 @@ export default class CursorExtractor extends BaseExtractor {
         });
       }
     }
-  }
-
-  private async readFileSafe(p: string): Promise<string | null> {
-    try { return await readFile(p, 'utf-8'); } catch { return null; }
-  }
-
-  private async dirExists(p: string): Promise<boolean> {
-    try { return (await stat(p)).isDirectory(); } catch { return false; }
   }
 
   private async listMdFiles(dir: string): Promise<string[]> {

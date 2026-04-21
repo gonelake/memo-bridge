@@ -12,24 +12,25 @@
  *   .memory/words-*.md                      — vocabulary outputs (alt)
  */
 
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import { BaseExtractor } from './base.js';
-import { detectTool, autoDiscoverCodeBuddyWorkspaces, scanCodeBuddyWorkspaces } from '../core/detector.js';
+import { BaseExtractor, type DetectConfig } from './base.js';
+import { autoDiscoverCodeBuddyWorkspaces, scanCodeBuddyWorkspaces } from '../core/detector.js';
 import { mergeMemories } from '../core/merger.js';
 import { scanAndRedact } from '../core/privacy.js';
 import { log } from '../utils/logger.js';
 import type {
-  DetectResult, ExtractOptions, MemoBridgeData,
+  ExtractOptions, MemoBridgeData,
   KnowledgeSection, WorkspaceInfo,
 } from '../core/types.js';
 
 export default class CodeBuddyExtractor extends BaseExtractor {
   readonly toolId = 'codebuddy' as const;
-
-  async detect(): Promise<DetectResult> {
-    return detectTool('codebuddy');
-  }
+  readonly detectConfig: DetectConfig = {
+    globalPaths: ['~/.codebuddy'],
+    workspaceMarkers: ['.codebuddy', '.memory'],
+    description: 'CodeBuddy automations and memory files',
+  };
 
   async extract(options: ExtractOptions): Promise<MemoBridgeData> {
     // Determine workspaces to extract from
@@ -449,11 +450,11 @@ export default class CodeBuddyExtractor extends BaseExtractor {
 
     // Detect project contexts from work logs
     for (const projectName of projects) {
-      const existing = data.projects.find(p =>
-        p.name === projectName ||
-        p.name.includes(projectName) ||
-        projectName.includes(p.name)
-      );
+      // Exact-name dedup. The old substring check ("Memo" ⊂ "MemoBridge")
+      // caused data loss when a shorter name appeared first, so only match
+      // exact equality here; legitimate duplicates in CodeBuddy logs are
+      // always exact string matches of the same H2 title.
+      const existing = data.projects.find(p => p.name === projectName);
       if (!existing && projectName.length > 2 && projectName.length < 50) {
         // Extract key insights from the section under this h2
         const sectionContent = this.extractSection(content, projectName);
@@ -513,23 +514,6 @@ export default class CodeBuddyExtractor extends BaseExtractor {
   // ============================================================
   // Utility methods
   // ============================================================
-
-  private async readFileSafe(filePath: string): Promise<string | null> {
-    try {
-      return await readFile(filePath, 'utf-8');
-    } catch {
-      return null;
-    }
-  }
-
-  private async dirExists(dirPath: string): Promise<boolean> {
-    try {
-      const s = await stat(dirPath);
-      return s.isDirectory();
-    } catch {
-      return false;
-    }
-  }
 
   private summarizeContent(content: string, maxChars: number): string {
     const cleaned = content

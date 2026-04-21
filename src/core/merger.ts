@@ -55,6 +55,15 @@ export function mergeMemories(...sources: MemoBridgeData[]): MemoBridgeData {
         base.raw_memories.push(memory);
       }
     }
+
+    // Merge extensions (tool-namespaced; same tool later-wins, different
+    // tools never collide)
+    if (other.extensions) {
+      base.extensions ??= {};
+      for (const [toolId, ext] of Object.entries(other.extensions)) {
+        base.extensions[toolId] = { ...base.extensions[toolId], ...ext };
+      }
+    }
   }
 
   // Update stats
@@ -69,7 +78,17 @@ function isDuplicate(memory: Memory, existing: Memory[]): boolean {
   return existing.some(e => {
     const contentA = e.content.toLowerCase().trim();
     const contentB = memory.content.toLowerCase().trim();
-    return contentA === contentB || jaccardSimilarity(contentA, contentB) > 0.8;
+    if (contentA === contentB) return true;
+
+    // Short texts are more noisy under Jaccard (tiny set sizes make small
+    // differences look similar). Raise the bar for them to avoid false
+    // duplicates on entries like "记住：rust 推荐" vs "记住：rust 推荐用".
+    const minTokens = Math.min(
+      contentA.split(/\s+/).filter(Boolean).length,
+      contentB.split(/\s+/).filter(Boolean).length,
+    );
+    const threshold = minTokens < 6 ? 0.95 : 0.8;
+    return jaccardSimilarity(contentA, contentB) > threshold;
   });
 }
 
