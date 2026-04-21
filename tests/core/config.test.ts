@@ -269,3 +269,47 @@ describe('loadConfig — default_workspace path safety', () => {
     expect(cfg.defaultWorkspace).toBe(safe);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Privacy extra_patterns — ReDoS guard (P0-1)
+//
+// A syntactically valid user regex like `(a+)+b` can hang the scanner
+// for tens of seconds per memory content — effectively a DoS vector
+// against any operator who edits their own .memobridge.yaml. The load
+// layer runs a bounded smoke test against a set of adversarial inputs
+// and drops any pattern that takes longer than ~50ms.
+// ---------------------------------------------------------------------------
+
+describe('loadConfig — ReDoS guard on extra_patterns', () => {
+  it('drops the classic catastrophic-backtracking pattern (a+)+b', async () => {
+    await writeProjectConfig([
+      'privacy:',
+      '  extra_patterns:',
+      '    - "(a+)+b"',
+    ].join('\n'));
+    const cfg = await loadConfig({ cwd: testCwd, home: testHome });
+    expect(cfg.privacy.extraPatterns).toEqual([]);
+  });
+
+  it('accepts a well-formed user pattern', async () => {
+    await writeProjectConfig([
+      'privacy:',
+      '  extra_patterns:',
+      '    - "INTERNAL-\\\\d+"',
+    ].join('\n'));
+    const cfg = await loadConfig({ cwd: testCwd, home: testHome });
+    expect(cfg.privacy.extraPatterns).toEqual(['INTERNAL-\\d+']);
+  });
+
+  it('keeps safe patterns while dropping a ReDoS one in the same list', async () => {
+    await writeProjectConfig([
+      'privacy:',
+      '  extra_patterns:',
+      '    - "SAFE-\\\\d{6}"',
+      '    - "(a+)+b"',
+      '    - "TOKEN_[a-z]+"',
+    ].join('\n'));
+    const cfg = await loadConfig({ cwd: testCwd, home: testHome });
+    expect(cfg.privacy.extraPatterns).toEqual(['SAFE-\\d{6}', 'TOKEN_[a-z]+']);
+  });
+});

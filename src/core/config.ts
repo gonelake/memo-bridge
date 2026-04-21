@@ -206,6 +206,18 @@ function applyLayer(out: ResolvedConfig, raw: RawConfig | null, source: string):
         log.warn(`[${source}] 跳过非法正则表达式: ${src}`);
         continue;
       }
+      // P0-1 fix: guard against catastrophic-backtracking (ReDoS) regexes.
+      // A syntactically valid pattern like `(a+)+b` can hang the main
+      // thread for tens of seconds on adversarial input. We run a one-shot
+      // smoke test here and drop any pattern that exceeds WARN_THRESHOLD_MS
+      // on even one of our canned adversarial inputs.
+      const redosIssue = detectRedos(src);
+      if (redosIssue) {
+        log.warn(
+          `[${source}] 跳过疑似 ReDoS 正则: ${src} (${redosIssue})`,
+        );
+        continue;
+      }
       if (!out.privacy.extraPatterns.includes(src)) {
         out.privacy.extraPatterns.push(src);
       }
@@ -243,4 +255,70 @@ function isValidRegex(src: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ============================================================
+// ReDoS detection (P0-1)
+// ============================================================
+
+/**
+ * Upper bound (ms) for a single .match() call against any of the
+ * adversarial inputs below. 50ms is generous: a well-formed regex
+ * finishes in microseconds; catastrophic-backtracking patterns blow
+ * straight past this threshold into the seconds/minutes range.
+ *
+ * Node can't abort a sync regex mid-flight. If a pattern is truly
+ * pathological, the very call we make to test it will hang — but on a
+ * 1KB input that hang is bounded to a few seconds at most on common
+ * ReDoS patterns. We accept that cost at config-load time as the
+ * price of keeping the hot path (every memory.content redaction) safe.
+ */
+const REDOS_THRESHOLD_MS = 50;
+
+/**
+ * Adversarial inputs covering the shapes most likely to trigger
+ * catastrophic backtracking: long runs of identical chars, trailing
+ * mismatched delimiters, embedded quotes/escapes, and control chars.
+ * Any one slow response is enough to disqualify a pattern.
+ *
+ * Lengths are kept short (<= ~40 chars) intentionally: a safe regex
+ * finishes in microseconds regardless of input size, while a
+ * catastrophic-backtracking pattern (like `(a+)+b`) grows exponentially
+ * — 25 repeating chars is already enough to blow past the 50ms
+ * threshold by orders of magnitude, and keeps the smoke test itself
+ * from hanging config-load for minutes when fed a truly awful regex.
+ */
+const ADVERSARIAL_INPUTS: readonly string[] = [
+  'a'.repeat(25) + '!',                  // classic (a+)+b style blow-up
+  'x'.repeat(30) + '!!!',
+  'abc\'"\\n'.repeat(6),
+  '\u0000'.repeat(20),
+  '1234567890'.repeat(4) + 'Z',
+];
+
+/**
+ * Run a bounded smoke test. Returns a reason string if the pattern
+ * looks pathological, null otherwise.
+ */
+function detectRedos(source: string): string | null {
+  let re: RegExp;
+  try {
+    re = new RegExp(source);
+  } catch {
+    return 'invalid-regex'; // caller already filtered, but belt & suspenders
+  }
+  for (const input of ADVERSARIAL_INPUTS) {
+    const start = Date.now();
+    try {
+      input.match(re);
+    } catch {
+      // match itself throwing is weird but harmless — skip this input
+      continue;
+    }
+    const elapsed = Date.now() - start;
+    if (elapsed > REDOS_THRESHOLD_MS) {
+      return `input-${JSON.stringify(input.slice(0, 20))}... 耗时 ${elapsed}ms > ${REDOS_THRESHOLD_MS}ms`;
+    }
+  }
+  return null;
 }
