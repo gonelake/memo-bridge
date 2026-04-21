@@ -261,6 +261,35 @@ describe('recordImported', () => {
     expect(o.has('o-only')).toBe(true);
     expect(o.has('h-only')).toBe(false);
   });
+
+  it('is safe under concurrent writers — nothing is lost to a race', async () => {
+    // Regression for P1-1: the old read-merge-write implementation let
+    // two processes read the same baseline, each add their own hashes,
+    // and each serialize the full set — the later writer's file state
+    // overwrote the earlier one, silently dropping half the entries.
+    // Append-only semantics (O_APPEND in the kernel) must preserve both.
+    await Promise.all([
+      recordImported('hermes', ['a', 'b'], testRoot),
+      recordImported('hermes', ['c', 'd'], testRoot),
+      recordImported('hermes', ['e', 'f'], testRoot),
+    ]);
+    const ledger = await loadImportLedger('hermes', testRoot);
+    expect([...ledger].sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+  });
+
+  it('only writes the header once, even across many appends', async () => {
+    await recordImported('hermes', ['a'], testRoot);
+    await recordImported('hermes', ['b'], testRoot);
+    await recordImported('hermes', ['c'], testRoot);
+    const raw = await readFile(
+      join(testRoot, '.memobridge', 'imported', 'hermes.hashes'),
+      'utf-8',
+    );
+    // The marker line should appear exactly once. A naive fix that
+    // writes the header on every call would produce 3 occurrences.
+    const headerCount = raw.split('\n').filter(l => l.startsWith('# MemoBridge import ledger')).length;
+    expect(headerCount).toBe(1);
+  });
 });
 
 describe('filterAgainstLedger', () => {
