@@ -10,7 +10,7 @@ import {
   recordImported,
   filterAgainstLedger,
 } from '../../src/core/diff.js';
-import { scoreMemories } from '../../src/core/quality.js';
+import { scoreMemories, computeHash } from '../../src/core/quality.js';
 import type { Memory, MemoBridgeData } from '../../src/core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -131,6 +131,25 @@ describe('diffMemories', () => {
     const curr = scored('existing', 'first-new', 'second-new');
     const diff = diffMemories(curr, prev);
     expect(diff.memories.map(m => m.content)).toEqual(['first-new', 'second-new']);
+  });
+
+  it('de-dupes within current by content_hash (multi-workspace merge case)', () => {
+    // Regression for P1-3: users who merge raw_memories from several
+    // workspaces can pass the same logical memory twice. Before this
+    // fix both copies would flow through into MEMORY.md. Now only the
+    // first is emitted; the repeat is silently dropped — not counted
+    // as new, changed, unchanged, or anything.
+    const hA = computeHash('A');
+    const [a1, a1Dup, b1] = [
+      mem({ id: 'a', content: 'A', content_hash: hA }),
+      mem({ id: 'a-again', content: 'A', content_hash: hA }),
+      mem({ id: 'b', content: 'B' }),
+    ];
+    scoreMemories(makeData([a1, a1Dup, b1]));
+    const diff = diffMemories([a1, a1Dup, b1], []);
+    expect(diff.memories).toHaveLength(2);
+    expect(diff.stats.new).toBe(2);
+    expect(diff.stats.unchanged).toBe(0);
   });
 });
 
@@ -323,6 +342,15 @@ describe('filterAgainstLedger', () => {
     const { data: filtered, skipped } = filterAgainstLedger(data, new Set());
     expect(skipped).toBe(0);
     expect(filtered.raw_memories).toHaveLength(1);
+  });
+
+  it('de-dupes within the incoming data (second copy counts as skipped)', () => {
+    const data = makeData(scored('same'));
+    // Push a duplicate-by-hash copy
+    data.raw_memories.push({ ...data.raw_memories[0]!, id: 'copy' });
+    const { data: filtered, skipped } = filterAgainstLedger(data, new Set());
+    expect(filtered.raw_memories).toHaveLength(1);
+    expect(skipped).toBe(1);
   });
 });
 

@@ -80,9 +80,17 @@ export function diffMemories(
   const out: Memory[] = [];
   const stats: DiffStats = { new: 0, changed: 0, deleted: 0, unchanged: 0 };
   const currentHashes = new Set<string>();
+  // De-dupe within `current` itself. When users merge memories from
+  // multiple workspaces before diffing, the same logical memory can
+  // appear more than once. We keep the first occurrence and skip the
+  // rest silently (not counted as new / changed / unchanged — they
+  // contribute no information beyond the first copy).
+  const seenInCurrent = new Set<string>();
 
   for (const m of current) {
     const hash = m.content_hash ?? computeHash(m.content);
+    if (seenInCurrent.has(hash)) continue;
+    seenInCurrent.add(hash);
     currentHashes.add(hash);
 
     if (prevHashes.has(hash)) {
@@ -246,13 +254,19 @@ export function filterAgainstLedger(
   ledger: Set<string>,
 ): { data: MemoBridgeData; skipped: number } {
   const kept: Memory[] = [];
+  // De-dupe within the incoming set as well: re-merged exports can
+  // carry the same memory twice, and shipping duplicates through the
+  // ledger write-back would pollute the MEMORY.md output. Count these
+  // as "skipped" so the user sees them in the import summary.
+  const seen = new Set<string>();
   let skipped = 0;
   for (const m of data.raw_memories) {
     const hash = m.content_hash ?? computeHash(m.content);
-    if (ledger.has(hash)) {
+    if (ledger.has(hash) || seen.has(hash)) {
       skipped++;
       continue;
     }
+    seen.add(hash);
     kept.push(m);
   }
   return {
