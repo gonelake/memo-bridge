@@ -44,14 +44,46 @@ export interface ScanResult {
 }
 
 /**
+ * Build PatternDefs from user-supplied regex strings. Invalid patterns are
+ * dropped silently (caller is expected to have already warned at config
+ * load time); this function never throws so it's safe on hot paths.
+ *
+ * Every user pattern is forced to global-flag so redact covers all
+ * occurrences, and labeled uniformly as "Custom Pattern" (replacement
+ * tag). We intentionally don't let users pick labels in v0.2 to keep the
+ * config surface small — they can always pre-format the pattern if they
+ * want a specific replacement.
+ */
+function buildUserPatterns(extraPatterns: readonly string[]): PatternDef[] {
+  const out: PatternDef[] = [];
+  for (const raw of extraPatterns) {
+    try {
+      // Ensure 'g' flag for bulk replace; dedupe by adding only if missing.
+      const source = raw.trim();
+      if (!source) continue;
+      const re = new RegExp(source, 'g');
+      out.push({ name: 'Custom Pattern', pattern: re, replacement: '***CUSTOM_REDACTED***' });
+    } catch {
+      // Invalid regex — skip. Caller may have already warned.
+    }
+  }
+  return out;
+}
+
+/**
  * Scan content for sensitive information and return redacted version.
  * Creates fresh regex instances per call to avoid lastIndex state issues.
+ *
+ * v0.2 — `extraPatterns` appends user-supplied regex sources (from
+ * .memobridge.yaml) to the built-in list. Built-in patterns run first,
+ * then custom ones, so custom rules can target whatever remains.
  */
-export function scanAndRedact(content: string): ScanResult {
+export function scanAndRedact(content: string, extraPatterns: readonly string[] = []): ScanResult {
   let redacted = content;
   const detections: Array<{ name: string; count: number }> = [];
 
-  for (const { name, pattern, replacement } of getPatterns()) {
+  const allPatterns = [...getPatterns(), ...buildUserPatterns(extraPatterns)];
+  for (const { name, pattern, replacement } of allPatterns) {
     const matches = redacted.match(pattern);
     if (matches && matches.length > 0) {
       detections.push({ name, count: matches.length });

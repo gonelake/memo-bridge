@@ -63,6 +63,18 @@ export interface MemoBridgeMeta {
     earliest?: string;
     latest?: string;
   };
+  /**
+   * Pointer to the previous export used as a baseline for incremental sync.
+   * Populated by extract when --since is provided. Importers/diff tools use
+   * this to decide what is "new" relative to last seen state.
+   */
+  previous_export?: {
+    exported_at: string;
+    /** Stable hash over content_hash set of the previous export, for tamper detection. */
+    snapshot_hash?: string;
+    /** Total memories in the previous export (for quick diff stats). */
+    total_memories?: number;
+  };
 }
 
 export interface UserProfile {
@@ -80,6 +92,41 @@ export interface Memory {
   created_at?: string;
   updated_at?: string;
   tags?: string[];
+
+  // ------------------------------------------------------------
+  // v0.2 quality / sync fields — all optional for back-compat
+  // ------------------------------------------------------------
+
+  /**
+   * Stable short hash over `content` (sha256, first 12 hex chars).
+   * Populated by quality.scoreMemories(). Used as the identity key for
+   * incremental diff (content-addressable), since memory.id is tool-local
+   * and may collide across sources.
+   */
+  content_hash?: string;
+
+  /** 0..1 — heuristic importance score. See quality.computeImportance(). */
+  importance?: number;
+
+  /** 0..1 — recency decay based on updated_at/created_at. */
+  freshness?: number;
+
+  /** 0..1 — composite score: importance × freshness × confidence. */
+  quality?: number;
+
+  /**
+   * Provenance chain — where this memory originated and how it got here.
+   * Enables bidirectional sync and three-way merge (v0.3) by tracing the
+   * "home tool" of a memory vs. tools it has been imported into.
+   */
+  origin?: {
+    /** The tool that first produced this memory. */
+    tool: ToolId;
+    /** The tool we imported it from, if different from `tool` (for A→B→C chains). */
+    imported_from?: ToolId;
+    /** When we first observed this content_hash. */
+    first_seen_at?: string;
+  };
 }
 
 export interface KnowledgeItem {
@@ -198,4 +245,12 @@ export interface Importer {
   readonly toolId: ToolId;
   readonly toolName: string;
   import(data: MemoBridgeData, options: ImportOptions): Promise<ImportResult>;
+  /**
+   * Optional — declare every file this importer may overwrite or create.
+   * The CLI uses this to snapshot files into .memobridge/backups/ before
+   * calling import(), enabling rollback. Returning [] or omitting this
+   * method means "no file-based side effects" (e.g. instruction-only
+   * importers like ChatGPT).
+   */
+  listTargets?(data: MemoBridgeData, options: ImportOptions): string[];
 }

@@ -5,6 +5,7 @@
  */
 
 import { BaseImporter } from './base.js';
+import { join } from 'node:path';
 import type { MemoBridgeData, ImportOptions, ImportResult } from '../core/types.js';
 
 /**
@@ -149,6 +150,12 @@ export class KimiImporter extends BaseImporter {
  */
 export class CodeBuddyImporter extends BaseImporter {
   readonly toolId = 'codebuddy' as const;
+
+  listTargets(_data: MemoBridgeData, options: ImportOptions): string[] {
+    const wsPath = options.workspace || process.cwd();
+    const today = new Date().toISOString().slice(0, 10);
+    return [join(wsPath, '.memory', `imported-${today}.md`)];
+  }
 
   async import(data: MemoBridgeData, options: ImportOptions): Promise<ImportResult> {
     const { writeFile, mkdir } = await import('node:fs/promises');

@@ -12,6 +12,11 @@ import type { MemoBridgeData, ImportOptions, ImportResult } from '../core/types.
 export default class CursorImporter extends BaseImporter {
   readonly toolId = 'cursor' as const;
 
+  listTargets(_data: MemoBridgeData, options: ImportOptions): string[] {
+    if (!options.workspace) return [];
+    return [join(options.workspace, '.cursorrules')];
+  }
+
   async import(data: MemoBridgeData, options: ImportOptions): Promise<ImportResult> {
     if (!options.workspace) {
       return {

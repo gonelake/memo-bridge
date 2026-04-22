@@ -16,6 +16,23 @@ export abstract class BaseImporter implements Importer {
   abstract import(data: MemoBridgeData, options: ImportOptions): Promise<ImportResult>;
 
   /**
+   * Declare every file this importer may overwrite or create for the given
+   * options. Used by the CLI to snapshot files into .memobridge/backups/
+   * before calling import(), enabling rollback on bad imports.
+   *
+   * Default implementation returns [] — subclasses SHOULD override to
+   * return a concrete list. Unknown/dynamic targets should err on the side
+   * of listing (over-backing-up is cheap; missing a target means no rollback).
+   *
+   * Returning [] means "no file-based side effects" — appropriate for
+   * instruction-only importers (ChatGPT/Doubao/Kimi) that only return
+   * text for the user to paste elsewhere.
+   */
+  listTargets(_data: MemoBridgeData, _options: ImportOptions): string[] {
+    return [];
+  }
+
+  /**
    * Flatten MemoBridgeData into a readable Markdown summary for instruction-based import
    */
   protected flattenToText(data: MemoBridgeData, maxChars?: number): string {

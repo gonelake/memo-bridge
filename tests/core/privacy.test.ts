@@ -308,3 +308,46 @@ describe('hasSensitiveInfo', () => {
     expect(hasSensitiveInfo('another@test.com')).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v0.2 M6 — user-supplied extra patterns
+// ---------------------------------------------------------------------------
+
+describe('scanAndRedact — extra patterns', () => {
+  it('applies user-supplied regex source strings in addition to built-ins', () => {
+    const text = 'Company id INTERNAL-123456 and also email foo@bar.com';
+    const result = scanAndRedact(text, ['INTERNAL-\\d{6}']);
+    expect(result.redacted_content).toContain('***CUSTOM_REDACTED***');
+    // Built-in email rule still fires too
+    expect(result.redacted_content).toContain('***EMAIL_REDACTED***');
+    expect(result.redacted_content).not.toContain('INTERNAL-123456');
+    expect(result.detections.some(d => d.name === 'Custom Pattern')).toBe(true);
+  });
+
+  it('silently skips invalid regex sources (does not throw)', () => {
+    const text = 'some INTERNAL-123 here';
+    expect(() => scanAndRedact(text, ['[(unclosed'])).not.toThrow();
+  });
+
+  it('forces global flag — redacts all occurrences of a custom pattern', () => {
+    const text = 'ACME-001 and ACME-002 and ACME-003';
+    const result = scanAndRedact(text, ['ACME-\\d+']);
+    expect(result.redacted_content.match(/ACME-\d+/g)).toBeNull();
+    const det = result.detections.find(d => d.name === 'Custom Pattern');
+    expect(det?.count).toBe(3);
+  });
+
+  it('empty / whitespace patterns are ignored', () => {
+    const text = 'content';
+    const result = scanAndRedact(text, ['', '   ']);
+    expect(result.found).toBe(false);
+    expect(result.redacted_content).toBe(text);
+  });
+
+  it('default (no extra patterns) behaves identically to old single-arg call', () => {
+    const text = 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const a = scanAndRedact(text);
+    const b = scanAndRedact(text, []);
+    expect(a).toEqual(b);
+  });
+});
