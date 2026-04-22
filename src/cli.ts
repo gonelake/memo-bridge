@@ -311,6 +311,14 @@ program
         if (ledgerSkipped > 0) log.table('增量跳过', ledgerSkipped);
         if (result.output_path) log.table('写入路径', result.output_path);
         if (backupId) log.table('备份 ID', backupId);
+        // v0.2.0 — surface importer warnings to user (previously silent).
+        // Without this, non-fatal issues (skipped Hermes skill names, Hermes
+        // MEMORY.md truncation, OpenClaw DREAMS stub notice, etc.) only
+        // appeared in the return object — users never saw them.
+        if (result.warnings && result.warnings.length > 0) {
+          console.log('');
+          for (const w of result.warnings) log.warn(w);
+        }
         if (result.instructions) {
           console.log('');
           log.info('请按以下步骤完成导入:');
@@ -392,6 +400,10 @@ program
         log.table('导入方式', result.method);
         log.table('导入条数', result.items_imported);
         if (backupId) log.table('备份 ID', backupId);
+        if (result.warnings && result.warnings.length > 0) {
+          console.log('');
+          for (const w of result.warnings) log.warn(w);
+        }
         if (result.instructions) {
           console.log('');
           console.log(result.instructions);
