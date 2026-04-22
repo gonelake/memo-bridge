@@ -43,9 +43,10 @@ Source: gonelake/memo-bridge@${GITHUB_SHA}"
 
           git push origin "$BRANCH"
 
+          SHORT_SHA="${GITHUB_SHA::8}"
           gh pr create \
             --repo gonelake/skills \
             --head "$BRANCH" \
             --base main \
-            --title "sync: update memo-bridge skill" \
-            --body "Auto-synced from [gonelake/memo-bridge@\`${GITHUB_SHA::8}\`](https://github.com/gonelake/memo-bridge/commit/${GITHUB_SHA})."
+            --title 'sync: update memo-bridge skill' \
+            --body "Auto-synced from gonelake/memo-bridge@${SHORT_SHA}: https://github.com/gonelake/memo-bridge/commit/${GITHUB_SHA}"
