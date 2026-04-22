@@ -1,0 +1,51 @@
+name: Sync Skill
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'skill/SKILL.md'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout memo-bridge
+        uses: actions/checkout@v4
+
+      - name: Clone skills repo
+        env:
+          GH_TOKEN: ${{ secrets.SKILLS_REPO_PAT }}
+        run: |
+          gh repo clone gonelake/skills /tmp/skills -- --depth=1
+
+      - name: Copy, commit and open PR
+        env:
+          GH_TOKEN: ${{ secrets.SKILLS_REPO_PAT }}
+        run: |
+          cd /tmp/skills
+
+          BRANCH="sync/memo-bridge-${GITHUB_SHA::8}"
+          git checkout -b "$BRANCH"
+
+          cp "$GITHUB_WORKSPACE/skill/SKILL.md" skills/memo-bridge/SKILL.md
+
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add skills/memo-bridge/SKILL.md
+
+          # 没有实际变化时静默退出
+          git diff --staged --quiet && echo "No changes, skipping." && exit 0
+
+          git commit -m "sync: update memo-bridge skill
+
+Source: gonelake/memo-bridge@${GITHUB_SHA}"
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --repo gonelake/skills \
+            --head "$BRANCH" \
+            --base main \
+            --title "sync: update memo-bridge skill" \
+            --body "Auto-synced from [gonelake/memo-bridge@\`${GITHUB_SHA::8}\`](https://github.com/gonelake/memo-bridge/commit/${GITHUB_SHA})."
