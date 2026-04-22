@@ -6,3 +6,9 @@ dist/
 .env
 .env.*
 coverage/
+
+# MemoBridge v0.2 workspace state:
+# - .memobridge/backups/   import-time file snapshots (contain absolute paths)
+# - .memobridge/imported/  per-tool content_hash ledger for incremental import
+# Never commit — leaks machine-local paths and may contain redacted secrets.
+.memobridge/

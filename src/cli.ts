@@ -37,7 +37,7 @@ const program = new Command();
 program
   .name('memo-bridge')
   .description('🌉 MemoBridge — AI memory migration tool\n   让你的 AI 记忆自由流动')
-  .version('0.1.0');
+  .version('0.2.0');
 
 // detect command
 program

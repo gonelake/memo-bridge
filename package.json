@@ -1,6 +1,6 @@
 {
   "name": "memo-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI memory migration tool — move your AI memories between tools freely. 让你的 AI 记忆自由流动。",
   "type": "module",
   "bin": {
