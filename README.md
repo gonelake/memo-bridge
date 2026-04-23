@@ -58,12 +58,8 @@ $ npx memo-bridge migrate --from codebuddy --to claude-code
      npx memo-bridge backup restore claude-code-20260423
 ```
 
-<!-- 🎬 Asciinema 录屏上线后替换为实际 GIF：
-  录制命令：asciinema rec demo.cast --overwrite
-  转换命令：agg demo.cast docs/demo.gif
-  然后取消下行注释：
--->
-<!-- ![MemoBridge Demo](./docs/demo.gif) -->
+<!-- 🎬 运行 `vhs docs/demo.tape` 生成 GIF 后此图自动显示 -->
+![MemoBridge Demo](./docs/demo.gif)
 
 ---
 

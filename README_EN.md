@@ -58,12 +58,8 @@ $ npx memo-bridge migrate --from codebuddy --to claude-code
      npx memo-bridge backup restore claude-code-20260423
 ```
 
-<!-- 🎬 Replace with actual GIF once recorded:
-  Record: asciinema rec demo.cast --overwrite
-  Convert: agg demo.cast docs/demo.gif
-  Then uncomment:
--->
-<!-- ![MemoBridge Demo](./docs/demo.gif) -->
+<!-- 🎬 Run `vhs docs/demo.tape` to generate the GIF -->
+![MemoBridge Demo](./docs/demo.gif)
 
 ---
 
