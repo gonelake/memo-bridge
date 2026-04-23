@@ -1,39 +1,84 @@
 <p align="center">
-  <h1 align="center">🌉 MemoBridge</h1>
-  <p align="center">让你的 AI 记忆自由流动 | Move your AI memories between tools freely</p>
+  <img src="./docs/logo.svg" alt="MemoBridge" width="360"/>
 </p>
 
 <p align="center">
-  <a href="#why-memobridge--为什么需要-memobridge">Why / 为什么</a> •
-  <a href="#installation--安装">Install / 安装</a> •
-  <a href="#quick-start--快速开始">Quick Start / 快速开始</a> •
-  <a href="#supported-tools--支持工具">Tools / 工具</a> •
-  <a href="#commands--命令参考">Commands / 命令</a>
+  <b>让你的 AI 记忆自由流动</b><br/>
+  <sub>在 CodeBuddy、Claude Code、Cursor、Hermes、ChatGPT、豆包、Kimi 之间一键迁移记忆</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/gonelake/memo-bridge/actions/workflows/ci.yml"><img src="https://github.com/gonelake/memo-bridge/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/memo-bridge"><img src="https://img.shields.io/npm/v/memo-bridge.svg" alt="npm version"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/memo-bridge.svg" alt="License"></a>
-  <img src="https://img.shields.io/node/v/memo-bridge.svg" alt="Node version">
+  <a href="https://github.com/gonelake/memo-bridge/actions/workflows/ci.yml">
+    <img src="https://github.com/gonelake/memo-bridge/actions/workflows/ci.yml/badge.svg" alt="CI"/>
+  </a>
+  <a href="https://www.npmjs.com/package/memo-bridge">
+    <img src="https://img.shields.io/npm/v/memo-bridge.svg?color=6366f1" alt="npm version"/>
+  </a>
+  <a href="./LICENSE">
+    <img src="https://img.shields.io/npm/l/memo-bridge.svg?color=8b5cf6" alt="License: MIT"/>
+  </a>
+  <img src="https://img.shields.io/node/v/memo-bridge.svg?color=10b981" alt="Node >= 22"/>
+  <a href="https://github.com/gonelake/memo-bridge/stargazers">
+    <img src="https://img.shields.io/github/stars/gonelake/memo-bridge?style=social" alt="GitHub Stars"/>
+  </a>
+  <a href="https://github.com/gonelake/memo-bridge/network/members">
+    <img src="https://img.shields.io/github/forks/gonelake/memo-bridge?style=social" alt="GitHub Forks"/>
+  </a>
+</p>
+
+<p align="center">
+  <a href="#-为什么需要-memobridge">为什么</a> •
+  <a href="#-快速开始">快速开始</a> •
+  <a href="#-支持工具">支持工具</a> •
+  <a href="#-命令参考">命令参考</a> •
+  <a href="#-v02-新特性">v0.2 新特性</a> •
+  <a href="#-路线图">路线图</a> •
+  <a href="./README_EN.md">English</a>
 </p>
 
 ---
 
-## Why MemoBridge / 为什么需要 MemoBridge？
+## 🎬 演示
 
-AI tools accumulate valuable context about you — preferences, project history, coding style, knowledge progress. But this memory is **locked inside each tool**.
+> **一键迁移：CodeBuddy → Claude Code**
 
-AI 工具会积累大量关于你的上下文——偏好、项目历史、编码风格、知识进度。但这些记忆**被锁在每个工具内部**。
+```
+$ npx memo-bridge migrate --from codebuddy --to claude-code
 
-- 🔒 Doubao memories can't be exported to Claude Code / 豆包的记忆无法迁移到 Claude Code
-- 🔄 Cursor and CodeBuddy memories are completely isolated / Cursor 和 CodeBuddy 的记忆完全隔离
-- 💻 New machine = AI knows nothing about you / 换电脑 = AI 对你一无所知
-- 🤖 Hermes can't inherit your OpenClaw context / Hermes 无法继承你在 OpenClaw 的记忆
+🌉 MemoBridge v0.2.0
 
-**MemoBridge fixes this.** One command to migrate your AI memories between any supported tools.
+  ✔ 检测到 CodeBuddy（3 个工作区）
+  ✔ 提取记忆 65 条
+  ✔ 隐私脱敏（已屏蔽 2 项敏感信息）
+  ✔ 质量评分完成（平均 0.74）
+  ✔ 自动备份 ~/.claude/CLAUDE.md → .memobridge/backups/claude-code-20260423/
+  ✔ 写入 ~/.claude/CLAUDE.md（2,341 字符）
 
-**MemoBridge 解决这一切。** 一条命令，让 AI 记忆在任意工具之间自由迁移。
+  🎉 迁移完成！如需回滚：
+     npx memo-bridge backup restore claude-code-20260423
+```
+
+<!-- 🎬 Asciinema 录屏上线后替换为实际 GIF：
+  录制命令：asciinema rec demo.cast --overwrite
+  转换命令：agg demo.cast docs/demo.gif
+  然后取消下行注释：
+-->
+<!-- ![MemoBridge Demo](./docs/demo.gif) -->
+
+---
+
+## ❓ 为什么需要 MemoBridge？
+
+你在不同的 AI 工具里积累了大量上下文——编码习惯、项目背景、个人偏好……但这些记忆**被锁在每个工具的孤岛里**：
+
+| 痛点 | 现状 |
+|------|------|
+| 🔒 豆包 / Kimi 的记忆无法导出 | 换工具 = 从零开始 |
+| 🔄 Cursor 和 CodeBuddy 互相隔离 | 同一个项目、两套上下文 |
+| 💻 换电脑 / 重装 | AI 对你一无所知 |
+| 🤖 Hermes 无法继承 OpenClaw 的记忆 | 每次都要重新调教 |
+
+**MemoBridge 一行命令解决这一切：**
 
 ```bash
 npx memo-bridge migrate --from codebuddy --to claude-code
@@ -41,94 +86,84 @@ npx memo-bridge migrate --from codebuddy --to claude-code
 
 ---
 
-## Features / 核心特性
+## ✨ 核心特性
 
-- 🔍 **Auto-detect / 自动检测** — Scans your system for installed AI tools / 扫描系统发现所有已安装的 AI 工具
-- 📤 **One-click export / 一键导出** — Extract memories into a standard format / 从任意工具提取记忆，输出标准格式
-- 📥 **Smart import / 智能导入** — Auto-adapts to target format (including Hermes' 2200-char limit) / 自动适配目标格式
-- 📋 **Prompt templates / 提示词模板** — Optimal prompts for tools without direct export / 为不支持导出的工具提供引导提示词
-- 🔐 **Privacy sanitization / 隐私脱敏** — Auto-redacts API keys, passwords, tokens (15 patterns) / 自动脱敏敏感信息
-- 📁 **Multi-workspace / 多工作区** — Scans all workspaces, merges and deduplicates / 自动扫描所有工作区，合并去重
-- 🇨🇳 **China AI tools / 国内工具** — First tool supporting Doubao, Kimi, Tongyi / 首个覆盖豆包、Kimi、通义千问的迁移工具
+| 特性 | 说明 |
+|------|------|
+| 🔍 **自动检测** | 扫描系统，发现所有已安装的 AI 工具 |
+| 📤 **一键导出** | 提取记忆并输出为标准 Markdown + YAML 格式 |
+| 📥 **智能导入** | 自动适配目标格式（含 Hermes 2200 字符限制） |
+| 📋 **提示词模板** | 为不支持直接导出的云端工具提供最优引导 prompt |
+| 🔐 **隐私脱敏** | 18+ 种模式自动识别并遮蔽 API Key / 密码 / Token |
+| 📁 **多工作区** | 自动扫描所有工作区，合并去重 |
+| 🔄 **增量同步** | 只导入新增/变更内容，反复运行不重复 |
+| 💾 **自动备份** | 导入前快照，一键回滚 |
+| 🇨🇳 **国内工具** | 首个覆盖豆包、Kimi 的迁移工具 |
 
 ---
 
-## Installation / 安装
+## 🚀 快速开始
 
 ```bash
-# Zero-install / 无需安装，直接使用
+# 无需安装，直接使用
 npx memo-bridge
 
-# Or install globally / 或全局安装
+# 或全局安装
 npm install -g memo-bridge
 ```
 
-**Requirements / 环境要求**：Node.js >= 22.0.0
+**环境要求**：Node.js >= 22.0.0
 
----
-
-## Quick Start / 快速开始
-
-### 1. Detect installed tools / 检测已安装的 AI 工具
+### 第一步：检测工具
 
 ```bash
 npx memo-bridge detect
 ```
 
-Output / 输出示例：
-
 ```
 🌉 MemoBridge — Tool Detection
 
-  📂 Local tools:
-     ● CodeBuddy    ~/.codebuddy/
-     ● Claude Code  ~/.claude/
-     ● Cursor       ~/.cursor/
+  📂 本地工具（可直接读写）:
+     ✅ CodeBuddy    ~/.codebuddy/  (3 个工作区)
+     ✅ Claude Code  ~/.claude/CLAUDE.md
+     ✅ Cursor       .cursorrules
 
-  ☁️  Cloud tools (prompt-guided):
-     ● ChatGPT
-     ● Doubao (豆包)
-     ● Kimi
+  ☁️  云端工具（Prompt 引导）:
+     📋 ChatGPT
+     📋 豆包 (Doubao)
+     📋 Kimi
 ```
 
-### 2. Export memories / 导出记忆
+### 第二步：导出记忆
 
 ```bash
-# From CodeBuddy (auto-scans all workspaces)
 # 从 CodeBuddy 导出（自动扫描所有工作区）
 npx memo-bridge extract --from codebuddy
 
-# Specify a single workspace / 指定单个工作区
+# 仅指定一个工作区
 npx memo-bridge extract --from codebuddy --workspace ~/projects/my-app
 
-# Specify scan root / 指定扫描根目录
-npx memo-bridge extract --from codebuddy --scan-dir ~/projects
-
-# From OpenClaw / Claude Code
-npx memo-bridge extract --from openclaw
-npx memo-bridge extract --from claude-code
+# 增量导出（只导出上次之后新增/变更的内容）
+npx memo-bridge extract --from codebuddy --since ./previous-export.md
 ```
 
-### 3. Import memories / 导入记忆
+### 第三步：导入记忆
 
 ```bash
-# To Claude Code (writes CLAUDE.md)
+# 导入到 Claude Code（写入 CLAUDE.md）
 npx memo-bridge import --to claude-code --input ./memo-bridge.md
 
-# To Hermes Agent (auto-trims to 2200 chars / 自动裁剪到 2200 字符)
+# 导入到 Hermes（自动裁剪到 2200 字符）
 npx memo-bridge import --to hermes --input ./memo-bridge.md
 
-# To Cursor (writes .cursorrules)
-npx memo-bridge import --to cursor --input ./memo-bridge.md --workspace ~/projects/my-app
+# 增量导入（已导入的内容不重复写入）
+npx memo-bridge import --to cursor --input ./memo-bridge.md --mode=incremental
 
-# To Doubao / 导入到豆包 (generates instructions / 生成"请记住"指令)
-npx memo-bridge import --to doubao --input ./memo-bridge.md
-
-# Dry-run / 预览模式
+# 预览模式（不实际写入）
 npx memo-bridge import --to hermes --input ./memo-bridge.md --dry-run
 ```
 
-### 4. One-step migration / 一键迁移
+### 一键迁移
 
 ```bash
 npx memo-bridge migrate --from codebuddy --to claude-code
@@ -136,119 +171,169 @@ npx memo-bridge migrate --from openclaw --to hermes
 npx memo-bridge migrate --from codebuddy --to cursor --workspace ~/projects/my-app
 ```
 
-### 5. Get export prompts / 获取导出提示词
-
-For tools without direct export / 对于不支持直接导出的工具：
+### 云端工具（豆包 / Kimi / ChatGPT）
 
 ```bash
+# Step 1：获取最优导出提示词
 npx memo-bridge prompt --for doubao
-npx memo-bridge prompt --for kimi
-npx memo-bridge prompt --for chatgpt
+
+# Step 2：将提示词粘贴到豆包对话，复制 AI 回答保存为 .md 文件
+
+# Step 3：导入到目标工具
+npx memo-bridge import --to claude-code --input ./doubao-export.md
 ```
 
-Copy the prompt into the AI tool's chat / 将提示词复制到对应工具的对话中发送。
+### 备份与回滚
+
+```bash
+npx memo-bridge backup list                     # 查看所有备份
+npx memo-bridge backup list --tool claude-code  # 按工具筛选
+npx memo-bridge backup restore <id>             # 一键恢复
+```
 
 ---
 
-## Supported Tools / 支持工具
+## 🛠 支持工具
 
-### Local tools (direct file access) / 本地工具（文件直读）
+### 本地工具（全自动，直接读写文件）
 
-| Tool / 工具 | Export / 导出 | Import / 导入 | Memory Path / 记忆路径 |
-|------|--------|--------|-------------|
-| **CodeBuddy** | ✅ | ✅ | `.codebuddy/automations/*/memory.md` + `.memory/*.md` |
-| **OpenClaw** | ✅ | ✅ | `~/.openclaw/workspace/MEMORY.md` + `memory/` |
-| **Hermes Agent** | ✅ | ✅ | `~/.hermes/memories/MEMORY.md` + `USER.md` |
-| **Claude Code** | ✅ | ✅ | `CLAUDE.md` + `~/.claude/CLAUDE.md` |
-| **Cursor** | ✅ | ✅ | `.cursorrules` + `.cursor/rules/*.md` |
+| 工具 | 导出 | 导入 | 记忆路径 | 多工作区 |
+|------|:----:|:----:|----------|:--------:|
+| **CodeBuddy** | ✅ 自动 | ✅ 自动 | `.codebuddy/automations/*/memory.md` + `.memory/*.md` | ✅ |
+| **OpenClaw** | ✅ 自动 | ✅ 自动 | `~/.openclaw/workspace/MEMORY.md` + `memory/` | ✅ |
+| **Hermes Agent** | ✅ 自动 | ✅ 自动 | `~/.hermes/memories/MEMORY.md` + `USER.md` | — |
+| **Claude Code** | ✅ 自动 | ✅ 自动 | `CLAUDE.md` + `~/.claude/CLAUDE.md` | — |
+| **Cursor** | ✅ 自动 | ✅ 自动 | `.cursorrules` + `.cursor/rules/*.md` | ✅ |
 
-### Cloud tools (prompt-guided) / 云端工具（Prompt 引导）
+### 云端工具（Prompt 引导，需手动复制粘贴）
 
-| Tool / 工具 | Export / 导出 | Import / 导入 |
-|------|--------|--------|
-| **ChatGPT** | Prompt-guided | "Please remember..." instructions |
-| **Doubao / 豆包** | Prompt 引导 | "请记住..." 指令 |
-| **Kimi** | Prompt 引导 | Context injection text / 上下文注入 |
+| 工具 | 导出 | 导入 | 备注 |
+|------|:----:|:----:|------|
+| **ChatGPT** | 📋 Prompt 引导 | 📋 生成"请记住"指令 | 无 API 直读支持 |
+| **豆包 (Doubao)** | 📋 Prompt 引导 | 📋 生成"请记住"指令 | 国内工具，首发支持 |
+| **Kimi** | 📋 Prompt 引导 | 📋 上下文注入文本 | 国内工具，首发支持 |
+
+> **图例：** ✅ 全自动 · 📋 Prompt 引导（需人工操作一次）
 
 ---
 
-## Commands / 命令参考
+## 📖 命令参考
 
-### `detect`
-
-Detect installed AI tools / 检测已安装的 AI 工具
+### `detect` — 检测工具
 
 ```bash
 memo-bridge detect
 ```
 
-### `extract`
-
-Export memories / 导出记忆
+### `extract` — 导出记忆
 
 ```bash
 memo-bridge extract --from <tool> [options]
 
-Options / 选项:
-  -f, --from <tool>       Source tool (required) / 来源工具（必填）
-  -w, --workspace <path>  Single workspace path / 指定单个工作区路径
-  -s, --scan-dir <path>   Scan root directory / 指定扫描根目录
-  -o, --output <path>     Output file (default: ./memo-bridge.md) / 输出文件路径
-  -v, --verbose           Verbose output / 详细输出
+  -f, --from <tool>         来源工具（必填）
+  -w, --workspace <path>    指定单个工作区
+  -s, --scan-dir <path>     指定扫描根目录（默认 ~/projects）
+  -o, --output <path>       输出文件（默认 ./memo-bridge.md）
+      --since <prev.md>     增量导出：只输出相对上次新增/变更的记忆
+  -v, --verbose             详细输出
 ```
 
-### `import`
-
-Import memories / 导入记忆
+### `import` — 导入记忆
 
 ```bash
 memo-bridge import --to <tool> --input <file> [options]
 
-Options / 选项:
-  -t, --to <tool>          Target tool (required) / 目标工具（必填）
-  -i, --input <file>       Input file / 输入文件路径
-  -w, --workspace <path>   Target workspace / 目标工作区路径
-  --dry-run                Preview mode / 预览模式，不实际写入
+  -t, --to <tool>           目标工具（必填）
+  -i, --input <file>        输入文件
+  -w, --workspace <path>    目标工作区
+      --mode=incremental    增量模式（已导入内容不重复写入）
+      --dry-run             预览模式，不实际写入
 ```
 
-### `migrate`
-
-One-step migration / 一键迁移
+### `migrate` — 一键迁移
 
 ```bash
 memo-bridge migrate --from <tool> --to <tool> [options]
 
-Options / 选项:
-  -f, --from <tool>        Source tool / 来源工具
-  -t, --to <tool>          Target tool / 目标工具
-  -w, --workspace <path>   Workspace path / 工作区路径
+  -f, --from <tool>         来源工具
+  -t, --to <tool>           目标工具
+  -w, --workspace <path>    工作区路径
 ```
 
-### `prompt`
-
-Get export prompt / 获取导出提示词
+### `prompt` — 获取导出提示词
 
 ```bash
-memo-bridge prompt --for <tool>
+memo-bridge prompt --for <tool>    # 支持：doubao | kimi | chatgpt
+```
+
+### `backup` — 备份管理
+
+```bash
+memo-bridge backup list [--tool <tool>]    # 列出备份
+memo-bridge backup restore <id>            # 恢复指定备份
 ```
 
 ---
 
-## Intermediate Format / 中间格式
+## 🆕 v0.2 新特性
 
-MemoBridge uses **Markdown + YAML front matter** as the standard interchange format.
+> v0.1 实现了**"能搬"**，v0.2 实现了**"敢用"**。
 
-MemoBridge 使用 **Markdown + YAML front matter** 作为标准中间格式。
+### 📊 质量评分
+每条记忆自动附带质量信号：
+- `content_hash` — SHA-256 前 12 位，用于增量同步身份
+- `importance` — 关键词权重 + 内容长度启发式
+- `freshness` — 基于 `updated_at` 的分段时间衰减
+- `quality` — `0.5·重要性 + 0.3·新鲜度 + 0.2·置信度` 加权合成
 
-- 📖 **Human-readable / 人类可读** — Open with any text editor / 任何编辑器可读
-- 🤖 **LLM-friendly / LLM 友好** — Can be used directly as CLAUDE.md / 可直接当 CLAUDE.md 用
-- 🔄 **Git-friendly / Git 友好** — Plain text, version-trackable / 纯文本可版本管理
-- 🔧 **Extensible / 可扩展** — YAML metadata supports custom fields / 支持自定义字段
+零新增依赖，纯规则启发式，不引入 embedding / LLM。
+
+### 💾 自动备份 + 回滚
+- 每次 `import` / `migrate` 前自动快照目标文件
+- 快照路径：`.memobridge/backups/<tool>-<时间戳>/`
+- 通过 `backup.retention` 配置保留条数（默认 10）
+
+### 🔄 增量同步
+- `--since <prev.md>`：只提取上次导出后新增/变更的记忆
+- `--mode=incremental`：基于每工具 ledger，反复导入不重复
+- Ledger 使用 O_APPEND 原子追加，并发安全
+
+### ⚙️ 配置文件
+```yaml
+# .memobridge.yaml（项目级）或 ~/.config/memobridge/config.yaml（全局）
+default_workspace: ~/projects/my-app
+privacy:
+  extra_patterns:
+    - 'my-secret-\w+'
+quality:
+  importance_keywords:
+    - '关键'
+    - 'critical'
+backup:
+  retention: 10
+```
+
+优先级：CLI 参数 > 项目配置 > 全局配置 > 内置默认值。
+
+---
+
+## 🔒 隐私与安全
+
+- 🔐 **本地处理** — 所有数据在本地处理，不上传任何内容
+- 🛡️ **自动脱敏** — 18+ 种模式（OpenAI / Anthropic / GitHub / AWS Key、Bearer Token、DB 连接串、SSH Key、邮箱、私有 IP……）
+- 📏 **路径安全** — 禁止访问 `/etc`、`~/.ssh` 等敏感目录，null-byte 拦截，符号链接守卫
+- 📦 **零遥测** — 不收集任何使用数据
+
+---
+
+## 📄 中间格式
+
+MemoBridge 使用 **Markdown + YAML front matter** 作为标准交换格式：
 
 ```markdown
 ---
 version: "0.1"
-exported_at: "2026-04-20T20:00:00+08:00"
+exported_at: "2026-04-23T10:00:00+08:00"
 source:
   tool: codebuddy
   extraction_method: file
@@ -257,92 +342,77 @@ stats:
   categories: 4
 ---
 
-# MemoBridge Export
+# 用户画像
+## 身份
+- 姓名：Alice
 
-## User Profile
-...
+## 沟通偏好
+- 简洁直接，不需要过多解释
 
-## Knowledge
+# 知识积累
 ...
 ```
 
----
-
-## Privacy & Security / 隐私与安全
-
-- 🔐 **Local processing / 本地处理** — All data processed locally, nothing uploaded / 不上传任何数据
-- 🛡️ **Auto-sanitization / 自动脱敏** — Detects and redacts 15 types of sensitive info / 检测 15 种敏感信息
-- 👁️ **Transparent / 透明可审** — Output is plain text, fully auditable / 纯文本可审查
-- 📦 **Zero telemetry / 零遥测** — No usage data collected / 不收集使用数据
+- 📖 **人类可读** — 任意编辑器可打开审查
+- 🤖 **LLM 友好** — 可直接用作 `CLAUDE.md` / `.cursorrules`
+- 🔄 **Git 友好** — 纯文本，可版本管理
+- 🔧 **可扩展** — YAML 元数据支持自定义字段
 
 ---
 
-## Common Migration Scenarios / 常见迁移场景
+## 🗺 路线图
 
-```bash
-# CodeBuddy → Claude Code
-npx memo-bridge migrate --from codebuddy --to claude-code
-
-# OpenClaw → Hermes Agent
-npx memo-bridge migrate --from openclaw --to hermes
-
-# Doubao → Cursor / 豆包 → Cursor
-npx memo-bridge prompt --for doubao          # Step 1: Get prompt / 获取提示词
-# Step 2: Send prompt in Doubao, copy response / 在豆包中发送提示词，复制回答
-npx memo-bridge import --to cursor --input ./doubao-export.md  # Step 3: Import / 导入
-```
+| 版本 | 主题 | 状态 |
+|------|------|------|
+| **v0.1** | MVP：8 个工具 + Prompt 模板 + 隐私脱敏 | ✅ 已发布 |
+| **v0.2** | 质量评分 + 自动备份 + 增量同步 + 配置文件 | ✅ 已发布 |
+| **v0.3** | MCP Server（跨工具实时记忆共享）+ 三路合并 | 🚧 规划中 |
+| **v0.4** | Web UI + 浏览器扩展（ChatGPT / 豆包可视化导出） | 📌 待规划 |
+| **v1.0** | 云端备份 + 团队共享 + 通义 / 智谱 / Windsurf 适配器 | 📌 待规划 |
 
 ---
 
-## Development / 开发
+## 🛠 开发
 
 ```bash
 git clone https://github.com/gonelake/memo-bridge.git
 cd memo-bridge
 npm install
-npm run dev       # Watch mode / 开发模式
-npm run build     # Build / 构建
-npm run lint      # Type check / 类型检查
-npm test          # Test / 测试
+npm run dev       # 开发模式（watch）
+npm run build     # 构建
+npm run lint      # 类型检查
+npm test          # 运行全部测试（539 个）
+npm test -- privacy           # 运行单个测试文件（按名称过滤）
 ```
 
-### Adding a new tool adapter / 添加新工具适配器
+### 添加新工具适配器
 
-1. Create extractor in `src/extractors/`, extending `BaseExtractor` / 创建提取器
-2. Create importer in `src/importers/`, extending `BaseImporter` / 创建导入器
-3. Register in `src/cli.ts` (`getExtractor()` / `getImporter()`) / 注册到 CLI
-4. Add tool ID in `src/core/types.ts` (`ToolId` / `TOOL_NAMES`) / 添加工具标识
-
----
-
-## Roadmap / 路线图
-
-- [x] **v0.1** — MVP: 8 tools + Prompt templates + Privacy sanitization
-- [ ] **v0.2** — Coze API + Memory quality assessment + Incremental updates
-- [ ] **v0.3** — MCP Server (cross-tool real-time memory sharing)
-- [ ] **v0.4** — Web UI + Browser extension (ChatGPT/Doubao visual export)
-- [ ] **v1.0** — Cloud backup + Team sharing + Tongyi/Zhipu/Windsurf adapters
+1. `src/extractors/<tool>.ts`：继承 `BaseExtractor`，实现 `extract()`
+2. `src/importers/<tool>.ts`：继承 `BaseImporter`，实现 `import()`
+3. `src/registry/defaults.ts`：调用 `registerDefaults()` 注册
+4. `src/core/types.ts`：在 `ToolId` 和 `TOOL_NAMES` 中添加新工具 ID
 
 ---
 
-## Contributing / 贡献
+## 🤝 贡献
 
-Contributions welcome! / 欢迎贡献！
+欢迎任何形式的贡献！
 
-- 🔌 New tool adapters / 新工具适配器 (Windsurf / Cline / Copilot / Tongyi / Zhipu)
-- 🌐 Internationalization / 国际化
-- 🧪 Test cases / 测试用例
-- 📖 Documentation / 文档改进
+- 🔌 新工具适配器（Windsurf / Cline / Copilot / 通义 / 智谱）
+- 🎬 Asciinema 演示录制
+- 🌐 国际化
+- 🧪 测试用例
+- 📖 文档改进
 
 ---
 
-## License / 许可证
+## 许可证
 
 [MIT](./LICENSE)
 
 ---
 
 <p align="center">
-  <b>MemoBridge</b> — Your AI memories shouldn't be held hostage by any tool.<br/>
-  你的 AI 记忆，不该被任何工具绑架。
+  <b>MemoBridge</b> — 你的 AI 记忆，不该被任何工具绑架。<br/>
+  <sub><a href="./README_EN.md">English README →</a></sub>
 </p>
